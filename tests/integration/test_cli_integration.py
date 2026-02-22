@@ -321,6 +321,22 @@ class TestStatusExitStale:
         assert "stale" in data
 
 
+class TestProgressCommand:
+    def test_progress_json_after_index(self, runner, git_repo):
+        idx_result = runner.invoke(cli, [
+            "index", "--no-prompt", "--no-embed", "--progress", "--repo-root", str(git_repo),
+        ])
+        assert idx_result.exit_code == 0
+
+        progress_result = runner.invoke(cli, [
+            "progress", "--json", "--repo-root", str(git_repo),
+        ])
+        assert progress_result.exit_code == 0
+        payload = json.loads(progress_result.output)
+        assert "active" in payload
+        assert "progress" in payload
+
+
 # ---------------------------------------------------------------------------
 # Tests: codegraph doctor
 # ---------------------------------------------------------------------------

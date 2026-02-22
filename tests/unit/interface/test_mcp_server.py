@@ -95,6 +95,13 @@ class TestCodegraphServer:
         assert "Unknown tool" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_get_index_progress_tool_returns_payload(self):
+        server = CodegraphServer()
+        result = await server._handle_tool("get_index_progress", {})
+        assert "active" in result
+        assert "progress" in result
+
+    @pytest.mark.asyncio
     async def test_handle_get_snippet(self, tmp_path):
         (tmp_path / "test.py").write_text("x = 1\ny = 2\n")
         server = CodegraphServer(repo_root=str(tmp_path))
