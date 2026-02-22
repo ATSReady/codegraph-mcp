@@ -22,7 +22,7 @@ class TestCodegraphServer:
             ListToolsRequest(method="tools/list", params=None)
         )
         tools = result.root.tools
-        assert len(tools) == 14
+        assert len(tools) == 15
         names = [t.name for t in tools]
         assert "get_symbols" in names
         assert "get_symbol" in names
@@ -38,6 +38,7 @@ class TestCodegraphServer:
         assert "semantic_search" in names
         assert "get_file_summary" in names
         assert "get_repo_overview" in names
+        assert "get_session_metrics" in names
 
     @pytest.mark.asyncio
     async def test_list_resources_registered(self):
@@ -47,10 +48,11 @@ class TestCodegraphServer:
             ListResourcesRequest(method="resources/list", params=None)
         )
         resources = result.root.resources
-        assert len(resources) == 2
+        assert len(resources) == 3
         uris = [str(r.uri) for r in resources]
         assert "codegraph://status" in uris
         assert "codegraph://languages" in uris
+        assert "codegraph://metrics" in uris
 
     @pytest.mark.asyncio
     async def test_handle_get_repo_overview(self):

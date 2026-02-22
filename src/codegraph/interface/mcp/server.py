@@ -259,6 +259,11 @@ class CodegraphServer:
                     description="Get repository index overview",
                     inputSchema={"type": "object", "properties": {}},
                 ),
+                Tool(
+                    name="get_session_metrics",
+                    description="Get token savings metrics for this session",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
             ]
 
         @server.call_tool()
@@ -356,6 +361,7 @@ class CodegraphServer:
             "get_repo_overview": lambda: GetRepoOverviewUseCase(
                 self._store, self._git
             ).execute(),
+            "get_session_metrics": lambda: self._get_metrics_result(),
         }
 
         handler = handlers.get(name)
@@ -388,6 +394,11 @@ class CodegraphServer:
                     name="Supported Languages",
                     description="List of supported programming languages",
                 ),
+                Resource(
+                    uri="codegraph://metrics",
+                    name="Session Metrics",
+                    description="Token savings metrics for current session",
+                ),
             ]
 
         @server.read_resource()
@@ -406,7 +417,35 @@ class CodegraphServer:
                 )
 
                 return json.dumps({"languages": available_languages()})
+            elif uri_str == "codegraph://metrics":
+                return json.dumps(self._get_metrics_result())
             return json.dumps({"error": f"Unknown resource: {uri_str}"})
+
+    # ------------------------------------------------------------------
+    # Metrics helper
+    # ------------------------------------------------------------------
+
+    def _get_metrics_result(self) -> dict:
+        """Return session metrics as a dict for the get_session_metrics tool."""
+        metrics = self._metrics.get_session_metrics()
+        return {
+            "_naive_tokens": 0,  # No savings for this meta-tool
+            "tools": [
+                {
+                    "tool": t.tool,
+                    "calls": t.calls,
+                    "tokens_saved": t.tokens_saved,
+                    "naive_tokens": t.naive_tokens,
+                    "actual_tokens": t.actual_tokens,
+                }
+                for t in metrics.tools
+            ],
+            "total_naive": metrics.total_naive,
+            "total_actual": metrics.total_actual,
+            "total_saved": metrics.total_saved,
+            "percent_saved": round(metrics.percent_saved, 1),
+            "formatted": self._metrics.format_markdown(),
+        }
 
     # ------------------------------------------------------------------
     # Helpers
