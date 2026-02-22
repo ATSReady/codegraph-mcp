@@ -14,6 +14,7 @@ from codegraph.domain.workspace import (
     WorkspaceState,
     IndexMetadata,
     EmbeddingMetadata,
+    FileManifestEntry,
     FileDiagnostic,
     ParseStatus,
     PackageRoot,
@@ -558,6 +559,16 @@ def _serialize_metadata(meta: IndexMetadata) -> dict:
             {"language": pr.language, "root_path": pr.root_path, "rule": pr.rule}
             for pr in meta.package_roots
         ],
+        "file_manifest": {
+            fp: {
+                "file_path": entry.file_path,
+                "language": entry.language,
+                "mtime": entry.mtime,
+                "size": entry.size,
+                "parse_status": entry.parse_status.value,
+            }
+            for fp, entry in meta.file_manifest.items()
+        },
     }
 
 
@@ -588,4 +599,14 @@ def _deserialize_metadata(data: dict) -> IndexMetadata:
         package_roots=[
             PackageRoot(**pr) for pr in data.get("package_roots", [])
         ],
+        file_manifest={
+            fp: FileManifestEntry(
+                file_path=d["file_path"],
+                language=d["language"],
+                mtime=d["mtime"],
+                size=d["size"],
+                parse_status=ParseStatus(d["parse_status"]),
+            )
+            for fp, d in data.get("file_manifest", {}).items()
+        },
     )
