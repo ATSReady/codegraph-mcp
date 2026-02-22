@@ -14,6 +14,17 @@ class ResolveSymbolUseCase:
     def __init__(self, store: SymbolStore) -> None:
         self._store = store
 
+    def _get_naive_from_symbols(self, matches: list) -> int:
+        """Naive baseline = sum of token costs of unique files from matched symbols."""
+        meta = self._store.get_metadata()
+        if not meta or not meta.repo_stats:
+            return 0
+        unique_files = {s.file_path for s in matches}
+        return sum(
+            meta.repo_stats.per_file_tokens.get(fp, 0)
+            for fp in unique_files
+        )
+
     def execute(
         self,
         name: str,
@@ -41,5 +52,5 @@ class ResolveSymbolUseCase:
                 for s in matches
             ],
             "count": len(matches),
-            "_naive_tokens": max(2000, len(matches) * 400),
+            "_naive_tokens": self._get_naive_from_symbols(matches),
         }
