@@ -64,6 +64,7 @@ def init(dry_run, repo_root):
 def main():
     """Entry point for the CLI."""
     # Import command modules so their @cli.command() decorators register
+    import codegraph.interface.cli.hooks_cmd  # noqa: F401
     import codegraph.interface.cli.index_cmd  # noqa: F401
     import codegraph.interface.cli.status_cmd  # noqa: F401
 
