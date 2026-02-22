@@ -70,12 +70,14 @@ def mock_git():
     git = MagicMock()
     git.is_git_repo.return_value = True
     git.get_head_commit.return_value = "abc123"
+    git.list_tracked_files.return_value = []
     return git
 
 
 class TestIndexRepoUseCase:
     def test_basic_index(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
         use_case = IndexRepoUseCase(
             store=mock_store,
             parser=mock_parser,
@@ -90,6 +92,7 @@ class TestIndexRepoUseCase:
 
     def test_increments_generation(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
         mock_store.get_metadata.return_value = _make_metadata(generation=5, head_commit="old")
         use_case = IndexRepoUseCase(
             store=mock_store,
@@ -101,6 +104,7 @@ class TestIndexRepoUseCase:
 
     def test_with_chunker(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
         mock_chunker = MagicMock()
         mock_chunker.chunk_file.return_value = []
         use_case = IndexRepoUseCase(
@@ -128,6 +132,7 @@ class TestIndexRepoUseCase:
         """When a file exists during discovery but is gone at read time."""
         # Write file, discover it, then delete before read
         (tmp_path / "test.py").write_text("x = 1\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
         use_case = IndexRepoUseCase(
             store=mock_store,
             parser=mock_parser,
@@ -136,11 +141,11 @@ class TestIndexRepoUseCase:
         # Discover files first, then patch read to fail
         files = use_case._discover_files(str(tmp_path))
         assert len(files) >= 1
-        # Remove the file to simulate it disappearing
+        # Remove the file to simulate it disappearing between discovery and read
         os.remove(tmp_path / "test.py")
         result = use_case.execute(str(tmp_path))
-        assert result.files_failed == 0  # No files discovered now
-        assert result.files_discovered == 0
+        assert result.files_discovered == 1  # git still reports the file
+        assert result.files_failed == 1  # but reading it fails
 
     def test_no_git_walks_directory(self, mock_store, mock_parser, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")
@@ -160,6 +165,7 @@ class TestIndexRepoUseCase:
         vendor_dir.mkdir()
         (vendor_dir / "lib.py").write_text("x = 1\n")
         (tmp_path / "main.py").write_text("x = 1\n")
+        mock_git.list_tracked_files.return_value = ["vendor/lib.py", "main.py"]
         use_case = IndexRepoUseCase(
             store=mock_store,
             parser=mock_parser,
@@ -184,6 +190,7 @@ class TestIndexRepoUseCase:
 
     def test_metadata_set_with_workspace_state(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
         use_case = IndexRepoUseCase(
             store=mock_store,
             parser=mock_parser,
@@ -199,6 +206,7 @@ class TestIndexRepoUseCase:
         hidden.mkdir()
         (hidden / "secret.py").write_text("x = 1\n")
         (tmp_path / "visible.py").write_text("x = 1\n")
+        mock_git.list_tracked_files.return_value = ["visible.py"]
         use_case = IndexRepoUseCase(
             store=mock_store,
             parser=mock_parser,
