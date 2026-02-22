@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import asdict
 from typing import Optional
 
 from mcp.server import Server
@@ -267,6 +268,16 @@ class CodegraphServer:
                     description="Get token savings metrics for this session",
                     inputSchema={"type": "object", "properties": {}},
                 ),
+                Tool(
+                    name="get_index_progress",
+                    description="Get active or specific index/reindex progress snapshot",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "operation_id": {"type": "string"},
+                        },
+                    },
+                ),
             ]
 
         @server.call_tool()
@@ -375,6 +386,9 @@ class CodegraphServer:
                 self._store, self._git
             ).execute(),
             "get_session_metrics": lambda: self._get_metrics_result(),
+            "get_index_progress": lambda: self._get_index_progress_result(
+                operation_id=coerced.get("operation_id")
+            ),
         }
 
         handler = handlers.get(name)
@@ -412,6 +426,11 @@ class CodegraphServer:
                     name="Session Metrics",
                     description="Token savings metrics for current session",
                 ),
+                Resource(
+                    uri="codegraph://index-progress",
+                    name="Index Progress",
+                    description="Current or latest index/reindex progress snapshot",
+                ),
             ]
 
         @server.read_resource()
@@ -432,6 +451,8 @@ class CodegraphServer:
                 return json.dumps({"languages": available_languages()})
             elif uri_str == "codegraph://metrics":
                 return json.dumps(self._get_metrics_result())
+            elif uri_str == "codegraph://index-progress":
+                return json.dumps(self._get_index_progress_result())
             return json.dumps({"error": f"Unknown resource: {uri_str}"})
 
     # ------------------------------------------------------------------
@@ -459,6 +480,18 @@ class CodegraphServer:
             "percent_saved": round(metrics.percent_saved, 1),
             "formatted": self._metrics.format_markdown(),
         }
+
+    def _get_index_progress_result(self, operation_id: Optional[str] = None) -> dict:
+        """Return index/reindex progress snapshot."""
+        if operation_id:
+            snapshot = self._progress_tracker.get(operation_id)
+        else:
+            snapshot = self._progress_tracker.get_active() or self._progress_tracker.get_last()
+
+        if snapshot is None:
+            return {"_naive_tokens": 0, "active": False, "progress": None}
+
+        return {"_naive_tokens": 0, "active": True, "progress": asdict(snapshot)}
 
     # ------------------------------------------------------------------
     # Helpers
