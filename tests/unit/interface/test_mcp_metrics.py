@@ -40,9 +40,7 @@ class TestGetSessionMetricsTool:
         # Record some metrics to verify they show up
         server._metrics.record("get_snippet", naive_tokens=5000, actual_tokens=800)
 
-        result = asyncio.get_event_loop().run_until_complete(
-            server._handle_tool("get_session_metrics", {})
-        )
+        result = asyncio.run(server._handle_tool("get_session_metrics", {}))
         assert "tools" in result
         assert "total_saved" in result
         assert "formatted" in result
