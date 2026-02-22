@@ -25,8 +25,10 @@ class NoIndexError(CodegraphError):
 class ProviderUnavailableError(CodegraphError):
     error_code = "provider_unavailable"
 
-    def __init__(self, provider: str) -> None:
-        super().__init__(f"Embedding provider '{provider}' is not available.")
+    def __init__(self, provider: str, detail: Optional[str] = None) -> None:
+        msg = detail or f"Embedding provider '{provider}' is not available."
+        super().__init__(msg)
+        self.provider = provider
 
 
 class ProviderMismatchError(CodegraphError):
