@@ -31,6 +31,7 @@ class IndexRepoUseCase:
         embedding_provider=None,  # EmbeddingProvider protocol (optional)
         chunker=None,  # CodeChunker (optional)
         config: Optional[CodegraphConfig] = None,
+        progress_tracker=None,
     ) -> None:
         self._store = store
         self._parser = parser
@@ -38,6 +39,7 @@ class IndexRepoUseCase:
         self._embedder = embedding_provider
         self._chunker = chunker
         self._config = config or CodegraphConfig()
+        self._progress_tracker = progress_tracker
 
     def execute(self, repo_root: str, force: bool = False) -> IndexResult:
         """Run the full indexing pipeline."""

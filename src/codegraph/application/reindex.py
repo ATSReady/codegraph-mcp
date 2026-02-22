@@ -22,12 +22,14 @@ class IncrementalReindexUseCase:
         git_client,  # GitClient protocol
         embedding_provider=None,  # EmbeddingProvider protocol (optional)
         chunker=None,  # CodeChunker (optional)
+        progress_tracker=None,
     ) -> None:
         self._store = store
         self._parser = parser
         self._git = git_client
         self._embedder = embedding_provider
         self._chunker = chunker
+        self._progress_tracker = progress_tracker
 
     def execute(self, repo_root: str) -> ReindexResult:
         """Run incremental reindex on changed files only."""

@@ -49,6 +49,11 @@ class TestCliStatus:
         result = runner.invoke(cli, ["status", "--json", "--repo-root", str(tmp_path)])
         assert result.exit_code == 0
 
+    def test_progress_command_exists(self, runner, tmp_path):
+        (tmp_path / ".codegraph").mkdir()
+        result = runner.invoke(cli, ["progress", "--repo-root", str(tmp_path)])
+        assert result.exit_code == 0
+
 
 
 class TestStatusMetrics:
