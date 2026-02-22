@@ -144,3 +144,10 @@ class SubprocessGitClient:
         if result.returncode != 0:
             return None
         return result.stdout if result.stdout.strip() else None
+
+    def list_tracked_files(self) -> list[str]:
+        """List all tracked files plus untracked non-ignored files."""
+        result = self._run("ls-files", "--recurse-submodules")
+        tracked = [f for f in result.stdout.strip().splitlines() if f] if result.returncode == 0 else []
+        untracked = self.get_untracked_files()
+        return sorted(set(tracked + untracked))
