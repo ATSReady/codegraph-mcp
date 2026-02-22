@@ -19,6 +19,8 @@ class SymbolKind(str, Enum):
     VARIABLE = "variable"
     IMPORT = "import"
     MODULE = "module"
+    TYPE_ALIAS = "type_alias"
+    ENUM = "enum"
 
 
 class EdgeKind(str, Enum):

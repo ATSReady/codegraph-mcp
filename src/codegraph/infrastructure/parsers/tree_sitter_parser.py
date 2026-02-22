@@ -9,6 +9,13 @@ from codegraph.domain.workspace import FileDiagnostic
 from codegraph.infrastructure.parsers.languages import detect_language, get_parser
 from codegraph.infrastructure.parsers.extractors.base import LanguageExtractor
 from codegraph.infrastructure.parsers.extractors.python_extractor import PythonExtractor
+from codegraph.infrastructure.parsers.extractors.typescript_extractor import TypeScriptExtractor
+from codegraph.infrastructure.parsers.extractors.javascript_extractor import JavaScriptExtractor
+
+# Map language aliases to the grammar name tree-sitter-languages actually supports.
+_PARSER_LANGUAGE_MAP: dict[str, str] = {
+    "jsx": "javascript",
+}
 
 
 class TreeSitterParser:
@@ -17,6 +24,10 @@ class TreeSitterParser:
     def __init__(self) -> None:
         self._extractors: dict[str, LanguageExtractor] = {
             "python": PythonExtractor(),
+            "typescript": TypeScriptExtractor(),
+            "tsx": TypeScriptExtractor(),  # TSX uses same extractor
+            "javascript": JavaScriptExtractor(),
+            "jsx": JavaScriptExtractor(),  # JSX uses same extractor
         }
 
     def parse_file(
@@ -27,7 +38,9 @@ class TreeSitterParser:
         if language is None:
             return [], [], []
 
-        parser = get_parser(language)
+        # Resolve grammar alias (e.g. "jsx" -> "javascript")
+        grammar_language = _PARSER_LANGUAGE_MAP.get(language, language)
+        parser = get_parser(grammar_language)
         tree = parser.parse(source_code.encode("utf-8"))
 
         extractor = self._extractors.get(language)
