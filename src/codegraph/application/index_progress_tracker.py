@@ -22,7 +22,7 @@ class IndexProgressTracker:
             mode=mode,
             partitions_total=max(0, partitions_total),
             files_total=max(0, files_total),
-            state=ProgressState.RUNNING,
+            state=ProgressState.QUEUED,
         )
         with self._lock:
             self._snapshots[operation_id] = snapshot
