@@ -31,8 +31,18 @@ class GetRepoOverviewUseCase:
                 "embedding_provider": metadata.embedding.provider_id,
                 "embedding_model": metadata.embedding.model,
             })
+            if metadata.repo_stats:
+                result.update({
+                    "total_tokens": metadata.repo_stats.total_tokens,
+                    "median_file_tokens": metadata.repo_stats.median_file_tokens,
+                    "p75_file_tokens": metadata.repo_stats.p75_file_tokens,
+                })
         if self._git:
             result["is_dirty"] = self._git.is_dirty()
             result["current_head"] = self._git.get_head_commit()
-        result["_naive_tokens"] = 0
+
+        if metadata and metadata.repo_stats:
+            result["_naive_tokens"] = metadata.repo_stats.total_tokens
+        else:
+            result["_naive_tokens"] = 0
         return result
