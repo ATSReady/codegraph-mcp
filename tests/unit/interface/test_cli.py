@@ -109,3 +109,20 @@ class TestCliVersion:
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
         assert "0.1.0" in result.output
+
+
+class TestCliIndexProgress:
+    def test_index_progress_flag_prints_live_status(self, runner, tmp_path):
+        import subprocess
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "main.py").write_text("def hello():\n    return 1\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+        (tmp_path / ".codegraph").mkdir(exist_ok=True)
+
+        result = runner.invoke(cli, ["index", "--no-embed", "--progress", "--repo-root", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "progress" in result.output.lower()
