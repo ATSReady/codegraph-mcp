@@ -297,7 +297,17 @@ class CodegraphServer:
                 except Exception:
                     pass
 
-                return [TextContent(type="text", text=json.dumps(response.to_dict()))]
+                contents = [TextContent(type="text", text=json.dumps(response.to_dict()))]
+                saved = self._metrics.session_tokens_saved
+                if saved > 0:
+                    saved_str = f"~{saved / 1000:.1f}k" if saved >= 1000 else f"~{saved}"
+                    contents.append(
+                        TextContent(
+                            type="text",
+                            text=f"[codegraph: {saved_str} tokens saved this session]",
+                        )
+                    )
+                return contents
             except Exception as e:
                 logger.exception("Tool %s failed: %s", name, e)
                 return [

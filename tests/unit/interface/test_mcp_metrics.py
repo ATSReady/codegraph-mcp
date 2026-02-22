@@ -49,3 +49,17 @@ class TestGetSessionMetricsTool:
         assert result["total_saved"] == 4200
         assert len(result["tools"]) == 1
         assert result["tools"][0]["tool"] == "get_snippet"
+
+
+class TestInlineSavingsHint:
+    def test_hint_format_over_1k(self):
+        saved = 5200
+        saved_str = f"~{saved / 1000:.1f}k" if saved >= 1000 else f"~{saved}"
+        hint = f"[codegraph: {saved_str} tokens saved this session]"
+        assert hint == "[codegraph: ~5.2k tokens saved this session]"
+
+    def test_hint_format_under_1k(self):
+        saved = 800
+        saved_str = f"~{saved / 1000:.1f}k" if saved >= 1000 else f"~{saved}"
+        hint = f"[codegraph: {saved_str} tokens saved this session]"
+        assert hint == "[codegraph: ~800 tokens saved this session]"
