@@ -44,6 +44,8 @@ src/codegraph/
 |-- application/
 |   |-- index_repo.py      # IndexRepoUseCase — full repository indexing
 |   |-- reindex.py          # IncrementalReindexUseCase — changed-files-only reindex
+|   |-- partition_planner.py # Partition planning for top-level/submodule buckets
+|   |-- index_progress_tracker.py # Thread-safe in-memory progress snapshots
 |   |-- staleness.py        # StalenessChecker, ReindexGuard (single-flight)
 |   |-- tools/
 |       |-- get_symbol.py        # GetSymbolUseCase
@@ -213,19 +215,21 @@ The application layer contains use cases that orchestrate domain types through p
 
 1. Discover files (walk directory, filter by language support and exclude patterns)
 2. Determine generation number (increment from metadata)
-3. Parse each file via `CodeParser` port, stamp generation on symbols/edges
-4. Chunk files via `CodeChunker` (symbol-aware chunking)
-5. Embed chunks via `EmbeddingProvider` port (if available)
-6. Write symbols, edges, chunks to `SymbolStore` port
-7. Build and store `IndexMetadata` with `WorkspaceState`
+3. Build deterministic partitions (submodules + top-level buckets)
+4. Parse/chunk files in bounded parallel workers
+5. Stamp generation on symbols/edges and aggregate results
+6. Serialize writes to `SymbolStore` (single commit stage)
+7. Publish progress lifecycle events (`queued -> running -> committing -> completed|failed`)
+8. Build and store `IndexMetadata` with `WorkspaceState`
 
 **`IncrementalReindexUseCase`** — delta reindex:
 
 1. Read stored metadata to get last indexed commit
 2. Query `GitClient` for changed files since that commit
-3. Delete old data for changed/deleted files
-4. Re-parse and re-embed only affected files
-5. Update metadata with new generation and HEAD commit
+3. Delete removed files in serialized stage
+4. Partition modified files and parse/chunk in bounded parallel workers
+5. Serialize writes + metadata update with a single generation bump
+6. Publish progress snapshots with mode `reindex`
 
 ### Staleness and Reindex Guard
 

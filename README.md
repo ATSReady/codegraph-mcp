@@ -1,6 +1,6 @@
 # codegraph-mcp
 
-MCP server that gives AI coding agents structural and semantic understanding of any codebase. Parses code with tree-sitter, stores symbols/edges/chunks in LanceDB, and exposes 14 tools + 2 resources over the Model Context Protocol.
+MCP server that gives AI coding agents structural and semantic understanding of any codebase. Parses code with tree-sitter, stores symbols/edges/chunks in LanceDB, and exposes 16 tools + 4 resources over the Model Context Protocol.
 
 ## Features
 
@@ -136,7 +136,17 @@ codegraph index         # builds the full code graph
 
 ```bash
 codegraph reindex       # incremental — only changed files
+codegraph reindex --progress
 codegraph index --force # full rebuild
+```
+
+### Live progress
+
+```bash
+codegraph index --progress
+codegraph progress
+codegraph progress --json
+codegraph progress --watch --interval-ms 200
 ```
 
 ### Check status
@@ -184,6 +194,8 @@ The server exposes these tools to AI agents:
 | `semantic_search` | Vector similarity search over code chunks |
 | `get_file_summary` | Symbols and structure of a single file |
 | `get_repo_overview` | High-level stats and file breakdown |
+| `get_session_metrics` | Session token savings metrics |
+| `get_index_progress` | Active/latest index or reindex progress snapshot |
 
 ## MCP Resources
 
@@ -191,6 +203,8 @@ The server exposes these tools to AI agents:
 |----------|-------------|
 | `codegraph://status` | Index generation, staleness, version |
 | `codegraph://languages` | Supported languages and extensions |
+| `codegraph://metrics` | Session token-savings metrics |
+| `codegraph://index-progress` | Active/latest progress JSON payload |
 
 ## Configuration
 
@@ -199,6 +213,10 @@ Config lives in `.codegraph/config.toml`:
 ```toml
 [index]
 exclude = ["vendor/**", "generated/**", "**/*.min.js", "node_modules/**"]
+parallel_workers = 1
+partition_strategy = "hybrid"
+min_partition_files = 1
+progress_event_interval_ms = 250
 
 [server]
 auto_reindex = true
