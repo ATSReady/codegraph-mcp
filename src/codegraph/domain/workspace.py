@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+
+from codegraph.domain.metrics import TOKEN_FACTOR
 
 
 class ParseStatus(str, Enum):
@@ -65,6 +68,61 @@ class EmbeddingMetadata:
 
 
 @dataclass
+class RepoStats:
+    """Computed repository statistics for accurate token savings estimation."""
+
+    total_files: int
+    total_bytes: int
+    total_tokens: int
+    median_file_tokens: int
+    p75_file_tokens: int
+    p90_file_tokens: int
+    per_file_tokens: dict[str, int]
+
+    @classmethod
+    def from_manifest(cls, manifest: dict[str, FileManifestEntry]) -> RepoStats:
+        if not manifest:
+            return cls(
+                total_files=0,
+                total_bytes=0,
+                total_tokens=0,
+                median_file_tokens=0,
+                p75_file_tokens=0,
+                p90_file_tokens=0,
+                per_file_tokens={},
+            )
+        sizes = [entry.size for entry in manifest.values()]
+        per_file = {
+            fp: math.ceil(entry.size * TOKEN_FACTOR)
+            for fp, entry in manifest.items()
+        }
+        total_bytes = sum(sizes)
+        sorted_sizes = sorted(sizes)
+        n = len(sorted_sizes)
+
+        def _percentile(data: list[int], pct: float) -> int:
+            """Linear interpolation percentile."""
+            if len(data) == 1:
+                return math.ceil(data[0] * TOKEN_FACTOR)
+            k = (pct / 100) * (len(data) - 1)
+            f = int(k)
+            c = f + 1 if f + 1 < len(data) else f
+            d = k - f
+            val = data[f] + d * (data[c] - data[f])
+            return math.ceil(val * TOKEN_FACTOR)
+
+        return cls(
+            total_files=n,
+            total_bytes=total_bytes,
+            total_tokens=math.ceil(total_bytes * TOKEN_FACTOR),
+            median_file_tokens=_percentile(sorted_sizes, 50),
+            p75_file_tokens=_percentile(sorted_sizes, 75),
+            p90_file_tokens=_percentile(sorted_sizes, 90),
+            per_file_tokens=per_file,
+        )
+
+
+@dataclass
 class IndexMetadata:
     workspace_state: WorkspaceState
     embedding: EmbeddingMetadata
@@ -73,3 +131,4 @@ class IndexMetadata:
     file_manifest: dict[str, FileManifestEntry] = field(default_factory=dict)
     module_path_rules: list[dict] = field(default_factory=list)
     module_path_cache: dict[str, str] = field(default_factory=dict)
+    repo_stats: Optional[RepoStats] = None

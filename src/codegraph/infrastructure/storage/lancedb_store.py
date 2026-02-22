@@ -18,6 +18,7 @@ from codegraph.domain.workspace import (
     FileDiagnostic,
     ParseStatus,
     PackageRoot,
+    RepoStats,
 )
 
 STORE_SCHEMA_VERSION = 1
@@ -569,12 +570,25 @@ def _serialize_metadata(meta: IndexMetadata) -> dict:
             }
             for fp, entry in meta.file_manifest.items()
         },
+        "repo_stats": {
+            "total_files": meta.repo_stats.total_files,
+            "total_bytes": meta.repo_stats.total_bytes,
+            "total_tokens": meta.repo_stats.total_tokens,
+            "median_file_tokens": meta.repo_stats.median_file_tokens,
+            "p75_file_tokens": meta.repo_stats.p75_file_tokens,
+            "p90_file_tokens": meta.repo_stats.p90_file_tokens,
+            "per_file_tokens": meta.repo_stats.per_file_tokens,
+        } if meta.repo_stats else None,
     }
 
 
 def _deserialize_metadata(data: dict) -> IndexMetadata:
     ws_data = data["workspace_state"]
     emb_data = data["embedding"]
+
+    rs_data = data.get("repo_stats")
+    repo_stats = RepoStats(**rs_data) if rs_data else None
+
     return IndexMetadata(
         workspace_state=WorkspaceState(
             head_commit=ws_data["head_commit"],
@@ -609,4 +623,5 @@ def _deserialize_metadata(data: dict) -> IndexMetadata:
             )
             for fp, d in data.get("file_manifest", {}).items()
         },
+        repo_stats=repo_stats,
     )

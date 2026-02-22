@@ -163,11 +163,16 @@ class IndexRepoUseCase:
             worktree_dirty=False,
         )
 
+        from codegraph.domain.workspace import RepoStats
+
+        repo_stats = RepoStats.from_manifest(manifest)
+
         new_metadata = IndexMetadata(
             workspace_state=workspace_state,
             embedding=embedding_meta,
             generation=generation,
             file_manifest=manifest,
+            repo_stats=repo_stats,
         )
         self._store.set_metadata(new_metadata)
 
