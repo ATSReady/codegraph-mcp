@@ -177,6 +177,7 @@ class Chunk:
     has_vector: bool = False
     embedded_hash8: Optional[str] = None
     vector_updated_at: Optional[str] = None
+    embedding_text: Optional[str] = None
     was_truncated: bool = False
     index_generation: int = 0
     indexed_at: Optional[str] = None
