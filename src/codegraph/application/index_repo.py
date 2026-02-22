@@ -179,7 +179,10 @@ class IndexRepoUseCase:
         """Get list of tracked files, filtered by language support."""
         from codegraph.infrastructure.parsers.languages import detect_language
 
-        all_files = self._walk_directory(repo_root)
+        if self._git:
+            all_files = self._git.list_tracked_files()
+        else:
+            all_files = self._walk_directory(repo_root)
 
         # Filter to supported languages and exclude patterns
         exclude_patterns = self._config.index.exclude if self._config else []
