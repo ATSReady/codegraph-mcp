@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import logging
 import time
@@ -13,6 +14,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent, Resource
 
 from codegraph.domain.config import CodegraphConfig
+from codegraph.application.metrics_tracker import MetricsTracker
+from codegraph.domain.metrics import estimate_tokens
 from codegraph.domain.models import SymbolKind
 from codegraph.interface.mcp.responses import ToolResponse, McpMeta, SCHEMA_VERSION
 
@@ -40,6 +43,8 @@ class CodegraphServer:
         self._chunker = chunker
         self._config = config or CodegraphConfig()
         self._repo_root = repo_root
+        metrics_dir = os.path.join(repo_root, ".codegraph", "metrics")
+        self._metrics = MetricsTracker(metrics_dir=metrics_dir)
         self._server = Server("codegraph")
         self._setup_tools()
         self._setup_resources()
@@ -263,6 +268,14 @@ class CodegraphServer:
             try:
                 result = await self._handle_tool(name, arguments)
                 duration = time.time() - start
+
+                # Extract naive token estimate before serialization
+                naive = result.pop("_naive_tokens", 0)
+                actual = estimate_tokens(json.dumps(result))
+
+                if naive > 0:
+                    self._metrics.record(name, naive_tokens=naive, actual_tokens=actual)
+
                 generation, stale = self._get_index_state()
                 meta = McpMeta(
                     server_version=self._get_version(),
@@ -270,8 +283,15 @@ class CodegraphServer:
                     generation=generation,
                     stale=stale,
                     duration_ms=round(duration * 1000),
+                    session_tokens_saved=self._metrics.session_tokens_saved,
                 )
                 response = ToolResponse(data=result, meta=meta)
+
+                try:
+                    self._metrics.persist()
+                except Exception:
+                    pass
+
                 return [TextContent(type="text", text=json.dumps(response.to_dict()))]
             except Exception as e:
                 logger.exception("Tool %s failed: %s", name, e)

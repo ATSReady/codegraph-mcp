@@ -19,6 +19,7 @@ class McpMeta:
     generation: int
     stale: bool
     duration_ms: int
+    session_tokens_saved: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -28,6 +29,7 @@ class McpMeta:
             "generation": self.generation,
             "stale": self.stale,
             "duration_ms": self.duration_ms,
+            "session_tokens_saved": self.session_tokens_saved,
         }
 
 
