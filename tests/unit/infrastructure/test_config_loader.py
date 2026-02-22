@@ -63,3 +63,21 @@ batch_size = 32
         # Verify it's loadable
         config = load_config(str(tmp_path))
         assert config.server.auto_reindex is True
+
+    def test_config_loader_reads_parallel_index_settings(self, tmp_path):
+        config_dir = tmp_path / ".codegraph"
+        config_dir.mkdir()
+        (config_dir / "config.toml").write_text(
+            """
+[index]
+parallel_workers = 4
+partition_strategy = "hybrid"
+min_partition_files = 3
+progress_event_interval_ms = 100
+"""
+        )
+        config = load_config(str(tmp_path))
+        assert config.index.parallel_workers == 4
+        assert config.index.partition_strategy == "hybrid"
+        assert config.index.min_partition_files == 3
+        assert config.index.progress_event_interval_ms == 100
