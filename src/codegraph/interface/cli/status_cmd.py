@@ -45,6 +45,18 @@ def status(as_json, exit_stale, repo_root):
         else:
             click.echo("No index found. Run 'codegraph index' to build one.")
 
+
+    # Show last session token savings if available
+    metrics_file = os.path.join(repo_root, ".codegraph", "metrics", "last-session.json")
+    if os.path.exists(metrics_file):
+        try:
+            with open(metrics_file) as f:
+                data = json.load(f)
+            m = data["metrics"]
+            click.echo(f"\nLast session: ~{m['total_saved']:,} tokens saved ({m['percent_saved']:.1f}%)")
+        except Exception:
+            pass
+
     if exit_stale and staleness.is_stale:
         sys.exit(3)
 
@@ -97,16 +109,50 @@ def doctor(repo_root):
 @click.option("--log-level", default="info", help="Log level")
 @click.option("--no-watch", is_flag=True, help="Disable file watchers")
 def serve(repo_root, log_level, no_watch):
-    """Start the MCP server."""
+    """Start the MCP server via stdio transport."""
     import asyncio
     import logging
 
-    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO))
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
     repo_root = os.path.abspath(repo_root)
+    logger = logging.getLogger("codegraph")
+    logger.info("Starting MCP server for %s", repo_root)
 
-    click.echo(f"Starting MCP server for {repo_root}...")
-    click.echo("MCP server not yet implemented.", err=True)
-    sys.exit(1)
+    from codegraph.infrastructure.storage.lancedb_store import LanceDBStore
+    from codegraph.infrastructure.parsers.tree_sitter_parser import TreeSitterParser
+    from codegraph.infrastructure.parsers.chunker import CodeChunker
+    from codegraph.infrastructure.git.client import SubprocessGitClient
+    from codegraph.interface.mcp.server import CodegraphServer
+
+    store_path = os.path.join(repo_root, ".codegraph", "index.lance")
+    store = LanceDBStore(store_path) if os.path.exists(os.path.dirname(store_path)) else None
+    parser = TreeSitterParser()
+    chunker = CodeChunker()
+    git_client = SubprocessGitClient(repo_root)
+
+    embedding_provider = None
+    try:
+        from codegraph.infrastructure.embeddings.local_onnx import LocalOnnxProvider
+        provider = LocalOnnxProvider()
+        if provider._resolve_model_path():
+            embedding_provider = provider
+    except Exception:
+        pass
+
+    server = CodegraphServer(
+        store=store,
+        parser=parser,
+        git_client=git_client,
+        embedding_provider=embedding_provider,
+        chunker=chunker,
+        repo_root=repo_root,
+    )
+
+    asyncio.run(server.run())
 
 
 @cli.command()

@@ -50,6 +50,29 @@ class TestCliStatus:
         assert result.exit_code == 0
 
 
+
+class TestStatusMetrics:
+    def test_shows_last_session_metrics(self, tmp_path):
+        """codegraph status shows last session's token savings."""
+        metrics_dir = tmp_path / ".codegraph" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        (metrics_dir / "last-session.json").write_text(json.dumps({
+            "session_id": "test123",
+            "metrics": {
+                "total_saved": 42000,
+                "percent_saved": 78.5,
+                "tools": [],
+                "total_naive": 53000,
+                "total_actual": 11000,
+            },
+        }))
+        from click.testing import CliRunner
+        from codegraph.interface.cli.main import cli
+        runner = CliRunner()
+        result = runner.invoke(cli, ["status", "--repo-root", str(tmp_path)])
+        assert "42,000" in result.output or "42000" in result.output
+
+
 class TestCliDoctor:
     def test_doctor_no_config(self, runner, tmp_path):
         result = runner.invoke(cli, ["doctor", "--repo-root", str(tmp_path)])
