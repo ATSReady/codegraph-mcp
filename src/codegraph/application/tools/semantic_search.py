@@ -18,6 +18,17 @@ class SemanticSearchUseCase:
         self._store = store
         self._embedder = embedding_provider
 
+    def _get_naive_from_results(self, results: list) -> int:
+        """Naive baseline = sum of token costs of unique files from search results."""
+        meta = self._store.get_metadata()
+        if not meta or not meta.repo_stats:
+            return 0
+        unique_files = {r.file_path for r in results}
+        return sum(
+            meta.repo_stats.per_file_tokens.get(fp, 0)
+            for fp in unique_files
+        )
+
     async def execute(
         self,
         query: str,
@@ -52,5 +63,5 @@ class SemanticSearchUseCase:
             ],
             "count": len(results),
             "query": query,
-            "_naive_tokens": max(3000, len(results) * 800),
+            "_naive_tokens": self._get_naive_from_results(results),
         }
