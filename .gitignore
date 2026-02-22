@@ -2,3 +2,17 @@
 .cachebro
 .memelord
 .docs
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.codegraph/index.lance/
+.codegraph/server.log
+.codegraph/server.log.*
+.codegraph/tmp/
+.codegraph/cache/
+.venv/
+.env
+*.onnx
