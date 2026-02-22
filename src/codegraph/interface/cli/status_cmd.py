@@ -4,10 +4,25 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from dataclasses import asdict
 
 import click
 
+from codegraph.application.index_progress_tracker import IndexProgressTracker
 from codegraph.interface.cli.main import cli
+
+_PROGRESS_TRACKER = IndexProgressTracker()
+
+
+def get_progress_tracker() -> IndexProgressTracker:
+    return _PROGRESS_TRACKER
+
+
+def format_progress_snapshot(snapshot) -> dict:
+    if snapshot is None:
+        return {"active": False, "progress": None}
+    return {"active": True, "progress": asdict(snapshot)}
 
 
 @cli.command()
@@ -59,6 +74,44 @@ def status(as_json, exit_stale, repo_root):
 
     if exit_stale and staleness.is_stale:
         sys.exit(3)
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--watch", is_flag=True, help="Watch progress until complete")
+@click.option("--interval-ms", default=250, type=int, show_default=True, help="Watch interval in milliseconds")
+@click.option("--repo-root", default=".", help="Repository root")
+def progress(as_json, watch, interval_ms, repo_root):
+    """Show active or most recent indexing progress."""
+    _ = os.path.abspath(repo_root)
+    tracker = get_progress_tracker()
+
+    def _emit_once() -> dict:
+        snapshot = tracker.get_active() or tracker.get_last()
+        payload = format_progress_snapshot(snapshot)
+        if as_json:
+            click.echo(json.dumps(payload, indent=2))
+        else:
+            if not payload["active"]:
+                click.echo("No progress data available.")
+            else:
+                p = payload["progress"]
+                click.echo(
+                    f"{p['mode']} {p['state']}: files {p['files_done']}/{p['files_total']} "
+                    f"partitions {p['partitions_done']}/{p['partitions_total']}"
+                )
+        return payload
+
+    if not watch:
+        _emit_once()
+        return
+
+    while True:
+        payload = _emit_once()
+        p = payload["progress"]
+        if (not payload["active"]) or p["state"] in {"completed", "failed", "cancelled"}:
+            return
+        time.sleep(max(interval_ms, 10) / 1000.0)
 
 
 @cli.command()

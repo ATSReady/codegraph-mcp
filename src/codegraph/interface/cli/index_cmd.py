@@ -16,8 +16,9 @@ from codegraph.interface.cli.main import cli
 @click.option("--provider", type=str, default=None, help="Override embedding provider")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.option("--break-stale-lock", is_flag=True, help="Break stale index locks")
+@click.option("--progress", "show_progress", is_flag=True, help="Show indexing progress updates")
 @click.option("--repo-root", default=".", help="Repository root")
-def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, repo_root):
+def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_progress, repo_root):
     """Build or rebuild the code index."""
     repo_root = os.path.abspath(repo_root)
 
@@ -77,25 +78,39 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, repo_
 
             # Run index
             from codegraph.application.index_repo import IndexRepoUseCase
+            from codegraph.interface.cli.status_cmd import get_progress_tracker
 
+            tracker = get_progress_tracker()
+            op_id = tracker.start(mode="index")
             use_case = IndexRepoUseCase(
                 store=store,
                 parser=parser,
                 git_client=git,
                 embedding_provider=embedding_provider,
                 chunker=chunker,
+                progress_tracker=tracker,
             )
 
             if verbose:
                 click.echo(f"Indexing {repo_root}...")
+            if show_progress:
+                click.echo("progress: index started")
 
             result = use_case.execute(repo_root, force=force)
+            tracker.complete(op_id)
 
             click.echo(
                 f"Indexed {result.files_indexed} files: "
                 f"{result.symbols_count} symbols, {result.edges_count} edges, "
                 f"{result.chunks_count} chunks (gen {result.generation})"
             )
+            if show_progress:
+                snap = tracker.get(op_id)
+                if snap:
+                    click.echo(
+                        f"progress: {snap.state.value} files {snap.files_done}/{snap.files_total} "
+                        f"failed {snap.files_failed}"
+                    )
             if result.files_failed > 0:
                 click.echo(f"  {result.files_failed} files failed", err=True)
             if result.chunks_embedded > 0:
@@ -108,8 +123,9 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, repo_
 
 @cli.command()
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--progress", "show_progress", is_flag=True, help="Show reindex progress updates")
 @click.option("--repo-root", default=".", help="Repository root")
-def reindex(verbose, repo_root):
+def reindex(verbose, show_progress, repo_root):
     """Incrementally reindex changed files."""
     repo_root = os.path.abspath(repo_root)
 
@@ -125,20 +141,25 @@ def reindex(verbose, repo_root):
             from codegraph.infrastructure.git.client import SubprocessGitClient
             from codegraph.infrastructure.parsers.chunker import CodeChunker
             from codegraph.application.reindex import IncrementalReindexUseCase
+            from codegraph.interface.cli.status_cmd import get_progress_tracker
 
             index_dir = os.path.join(repo_root, ".codegraph", "index.lance")
             store = LanceDBStore(index_dir)
             parser = TreeSitterParser()
             git = SubprocessGitClient(repo_root)
             chunker = CodeChunker()
+            tracker = get_progress_tracker()
+            op_id = tracker.start(mode="reindex")
 
             use_case = IncrementalReindexUseCase(
                 store=store,
                 parser=parser,
                 git_client=git,
                 chunker=chunker,
+                progress_tracker=tracker,
             )
             result = use_case.execute(repo_root)
+            tracker.complete(op_id)
 
             if result.needs_full_index:
                 click.echo("No existing index. Run 'codegraph index' first.")
@@ -149,6 +170,13 @@ def reindex(verbose, repo_root):
                 f"{result.symbols_count} symbols, {result.edges_count} edges "
                 f"(gen {result.generation})"
             )
+            if show_progress:
+                snap = tracker.get(op_id)
+                if snap:
+                    click.echo(
+                        f"progress: {snap.state.value} files {snap.files_done}/{snap.files_total} "
+                        f"failed {snap.files_failed}"
+                    )
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
