@@ -151,3 +151,18 @@ class SubprocessGitClient:
         tracked = [f for f in result.stdout.strip().splitlines() if f] if result.returncode == 0 else []
         untracked = self.get_untracked_files()
         return sorted(set(tracked + untracked))
+
+    def list_submodule_paths(self) -> list[str]:
+        """Return submodule paths declared in this repository."""
+        result = self._run("submodule", "status", "--recursive")
+        if result.returncode != 0:
+            return []
+        paths: list[str] = []
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parts = stripped.split()
+            if len(parts) >= 2:
+                paths.append(parts[1])
+        return sorted(set(paths))

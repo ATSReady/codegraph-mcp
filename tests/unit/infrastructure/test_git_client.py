@@ -2,6 +2,7 @@ import os
 import subprocess
 import tempfile
 import pytest
+from unittest.mock import MagicMock
 from codegraph.infrastructure.git.client import SubprocessGitClient
 
 
@@ -78,3 +79,8 @@ class TestSubprocessGitClient:
         assert len(renamed) == 1
         assert renamed[0]["old_path"] == "file.py"
         assert renamed[0]["new_path"] == "renamed.py"
+
+    def test_list_submodule_paths(self, git_repo):
+        client = SubprocessGitClient(str(git_repo))
+        client._run = MagicMock(return_value=MagicMock(returncode=0, stdout=" 123abc libs/a (heads/main)\n+456def deps/b (heads/dev)\n"))
+        assert client.list_submodule_paths() == ["deps/b", "libs/a"]
