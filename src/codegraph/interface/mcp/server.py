@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent, Resource
 
 from codegraph.domain.config import CodegraphConfig
+from codegraph.application.index_progress_tracker import IndexProgressTracker
 from codegraph.application.metrics_tracker import MetricsTracker
 from codegraph.domain.metrics import estimate_tokens
 from codegraph.domain.models import SymbolKind
@@ -35,6 +36,7 @@ class CodegraphServer:
         chunker=None,
         config: Optional[CodegraphConfig] = None,
         repo_root: str = ".",
+        progress_tracker: Optional[IndexProgressTracker] = None,
     ) -> None:
         self._store = store
         self._parser = parser
@@ -43,6 +45,7 @@ class CodegraphServer:
         self._chunker = chunker
         self._config = config or CodegraphConfig()
         self._repo_root = repo_root
+        self._progress_tracker = progress_tracker or IndexProgressTracker()
         metrics_dir = os.path.join(repo_root, ".codegraph", "metrics")
         self._metrics = MetricsTracker(metrics_dir=metrics_dir)
         self._server = Server("codegraph")
