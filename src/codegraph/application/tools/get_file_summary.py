@@ -35,4 +35,5 @@ class GetFileSummaryUseCase:
             "import_count": len(
                 [e for e in edges if e.kind == EdgeKind.IMPORTS]
             ),
+            "_naive_tokens": max(500, len(symbols) * 200),
         }

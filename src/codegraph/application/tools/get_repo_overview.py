@@ -34,4 +34,5 @@ class GetRepoOverviewUseCase:
         if self._git:
             result["is_dirty"] = self._git.is_dirty()
             result["current_head"] = self._git.get_head_commit()
+        result["_naive_tokens"] = 0
         return result

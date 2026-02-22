@@ -24,9 +24,10 @@ class GetDiffUseCase:
             file_path, base_ref, head_ref, context_lines,
         )
         if diff is None:
-            return {"file_path": file_path, "diff": None, "has_changes": False}
+            return {"file_path": file_path, "diff": None, "has_changes": False, "_naive_tokens": 0}
         return {
             "file_path": file_path,
             "diff": diff,
             "has_changes": True,
+            "_naive_tokens": 0,
         }

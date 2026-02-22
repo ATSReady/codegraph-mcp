@@ -52,4 +52,5 @@ class SemanticSearchUseCase:
             ],
             "count": len(results),
             "query": query,
+            "_naive_tokens": max(3000, len(results) * 800),
         }

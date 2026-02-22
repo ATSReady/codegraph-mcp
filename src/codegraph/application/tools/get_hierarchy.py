@@ -36,4 +36,5 @@ class GetHierarchyUseCase:
             ],
             "count": len(edges),
             "direction": direction,
+            "_naive_tokens": max(2000, len(edges) * 500),
         }

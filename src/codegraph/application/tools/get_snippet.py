@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from codegraph.domain.metrics import estimate_tokens
+
 
 class GetSnippetUseCase:
     """Read a range of lines from a source file."""
@@ -38,4 +40,5 @@ class GetSnippetUseCase:
             "total_lines": total,
             "content": "".join(snippet_lines),
             "truncated": end_line < total,
+            "_naive_tokens": estimate_tokens("".join(all_lines)),
         }

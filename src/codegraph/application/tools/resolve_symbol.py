@@ -41,4 +41,5 @@ class ResolveSymbolUseCase:
                 for s in matches
             ],
             "count": len(matches),
+            "_naive_tokens": max(2000, len(matches) * 400),
         }

@@ -31,4 +31,5 @@ class FindReferencesUseCase:
                 for e in edges
             ],
             "count": len(edges),
+            "_naive_tokens": max(2000, len(edges) * 500),
         }

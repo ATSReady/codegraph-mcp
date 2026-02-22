@@ -37,4 +37,5 @@ class GetImportsUseCase:
                 for e in edges
             ],
             "count": len(edges),
+            "_naive_tokens": max(500, len(edges) * 150),
         }

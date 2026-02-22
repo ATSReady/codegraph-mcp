@@ -28,4 +28,5 @@ class GetChangedFilesUseCase:
         return {
             "changes": changes,
             "count": len(changes),
+            "_naive_tokens": 0,
         }

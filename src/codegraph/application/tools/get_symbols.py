@@ -32,10 +32,17 @@ class GetSymbolsUseCase:
         if name_pattern:
             pattern = re.compile(name_pattern, re.IGNORECASE)
             symbols = [s for s in symbols if pattern.search(s.name)]
+
+        if file_path:
+            naive_tokens = max(500, len(symbols) * 200)
+        else:
+            naive_tokens = max(1000, len(symbols) * 200)
+
         return {
             "symbols": [self._serialize(s) for s in symbols],
             "next_cursor": next_cursor,
             "count": len(symbols),
+            "_naive_tokens": naive_tokens,
         }
 
     @staticmethod

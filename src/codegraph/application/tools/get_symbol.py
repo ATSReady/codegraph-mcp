@@ -27,8 +27,8 @@ class GetSymbolUseCase:
             return {"error": "Provide symbol_id or symbol_key"}
 
         if symbol is None:
-            return {"symbol": None}
-        return {"symbol": self._serialize(symbol)}
+            return {"symbol": None, "_naive_tokens": 3000}
+        return {"symbol": self._serialize(symbol), "_naive_tokens": 3000}
 
     @staticmethod
     def _serialize(s: Symbol) -> dict:
