@@ -19,3 +19,4 @@ build/
 *.onnx
 .codegraph
 .cachebro/
+.worktrees/
