@@ -8,6 +8,7 @@ from codegraph.domain.models import Symbol, Edge
 from codegraph.domain.workspace import FileDiagnostic
 from codegraph.infrastructure.parsers.languages import detect_language, get_parser
 from codegraph.infrastructure.parsers.extractors.base import LanguageExtractor
+from codegraph.infrastructure.parsers.extractors.generic_extractor import GenericExtractor
 from codegraph.infrastructure.parsers.extractors.python_extractor import PythonExtractor
 from codegraph.infrastructure.parsers.extractors.typescript_extractor import TypeScriptExtractor
 from codegraph.infrastructure.parsers.extractors.javascript_extractor import JavaScriptExtractor
@@ -29,6 +30,7 @@ class TreeSitterParser:
             "javascript": JavaScriptExtractor(),
             "jsx": JavaScriptExtractor(),  # JSX uses same extractor
         }
+        self._generic_extractor = GenericExtractor()
 
     def parse_file(
         self, file_path: str, source_code: str, language: Optional[str] = None,
@@ -43,9 +45,7 @@ class TreeSitterParser:
         parser = get_parser(grammar_language)
         tree = parser.parse(source_code.encode("utf-8"))
 
-        extractor = self._extractors.get(language)
-        if extractor is None:
-            return [], [], []
+        extractor = self._extractors.get(language, self._generic_extractor)
 
         symbols = extractor.extract_symbols(tree, source_code, file_path)
         edges = extractor.extract_edges(tree, source_code, file_path, symbols)
