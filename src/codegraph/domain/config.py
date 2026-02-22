@@ -13,6 +13,10 @@ class IndexConfig:
     ])
     include_uses: bool = False
     languages: list[str] = field(default_factory=list)
+    parallel_workers: int = 1
+    partition_strategy: str = "hybrid"
+    min_partition_files: int = 1
+    progress_event_interval_ms: int = 250
 
 
 @dataclass

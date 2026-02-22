@@ -49,6 +49,10 @@ def _parse_config(data: dict, repo_root: str) -> CodegraphConfig:
         exclude=index_data.get("exclude", _DEFAULT_INDEX.exclude),
         include_uses=index_data.get("include_uses", False),
         languages=index_data.get("languages", []),
+        parallel_workers=index_data.get("parallel_workers", 1),
+        partition_strategy=index_data.get("partition_strategy", "hybrid"),
+        min_partition_files=index_data.get("min_partition_files", 1),
+        progress_event_interval_ms=index_data.get("progress_event_interval_ms", 250),
     )
 
     server = ServerConfig(
@@ -104,6 +108,10 @@ def save_default_config(config_path: str) -> None:
 exclude = ["vendor/**", "generated/**", "**/*.min.js", "node_modules/**"]
 # include_uses = false
 # languages = []  # empty = all supported
+# parallel_workers = 1
+# partition_strategy = "hybrid"
+# min_partition_files = 1
+# progress_event_interval_ms = 250
 
 [server]
 auto_reindex = true
