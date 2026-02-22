@@ -29,7 +29,7 @@ class TestCodegraphServer:
             ListToolsRequest(method="tools/list", params=None)
         )
         tools = result.root.tools
-        assert len(tools) == 15
+        assert len(tools) == 16
         names = [t.name for t in tools]
         assert "get_symbols" in names
         assert "get_symbol" in names
@@ -46,6 +46,15 @@ class TestCodegraphServer:
         assert "get_file_summary" in names
         assert "get_repo_overview" in names
         assert "get_session_metrics" in names
+        assert "get_index_progress" in names
+
+    @pytest.mark.asyncio
+    async def test_list_tools_includes_get_index_progress(self):
+        server = CodegraphServer()
+        handler = server._server.request_handlers[ListToolsRequest]
+        result = await handler(ListToolsRequest(method="tools/list", params=None))
+        names = [t.name for t in result.root.tools]
+        assert "get_index_progress" in names
 
     @pytest.mark.asyncio
     async def test_list_resources_registered(self):
@@ -55,11 +64,20 @@ class TestCodegraphServer:
             ListResourcesRequest(method="resources/list", params=None)
         )
         resources = result.root.resources
-        assert len(resources) == 3
+        assert len(resources) == 4
         uris = [str(r.uri) for r in resources]
         assert "codegraph://status" in uris
         assert "codegraph://languages" in uris
         assert "codegraph://metrics" in uris
+        assert "codegraph://index-progress" in uris
+
+    @pytest.mark.asyncio
+    async def test_list_resources_includes_index_progress(self):
+        server = CodegraphServer()
+        handler = server._server.request_handlers[ListResourcesRequest]
+        result = await handler(ListResourcesRequest(method="resources/list", params=None))
+        uris = [str(r.uri) for r in result.root.resources]
+        assert "codegraph://index-progress" in uris
 
     @pytest.mark.asyncio
     async def test_handle_get_repo_overview(self):
