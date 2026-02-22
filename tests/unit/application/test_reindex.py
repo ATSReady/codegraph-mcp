@@ -1,8 +1,11 @@
 """Tests for the incremental reindex use case."""
+from concurrent.futures import Future
 import pytest
 from unittest.mock import MagicMock
 
 from codegraph.application.reindex import IncrementalReindexUseCase, ReindexResult
+from codegraph.application.index_progress_tracker import IndexProgressTracker
+from codegraph.domain.config import CodegraphConfig, IndexConfig
 from codegraph.domain.models import Symbol, SymbolKind
 from codegraph.domain.workspace import (
     IndexMetadata,
@@ -74,6 +77,59 @@ def mock_git():
 
 
 class TestIncrementalReindexUseCase:
+    def test_reindex_partitions_modified_files(self, mock_store, mock_parser, mock_git, tmp_path, monkeypatch):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "a.py").write_text("def a():\n    pass\n")
+        (tmp_path / "tests" / "t.py").write_text("def t():\n    pass\n")
+        mock_git.get_changed_files_since.return_value = [
+            {"file_path": "src/a.py", "status": "modified"},
+            {"file_path": "tests/t.py", "status": "modified"},
+        ]
+        submit_calls = []
+
+        class FakeExecutor:
+            def __init__(self, max_workers):
+                self.max_workers = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def submit(self, fn, *args, **kwargs):
+                submit_calls.append((fn, args, kwargs))
+                fut = Future()
+                fut.set_result(fn(*args, **kwargs))
+                return fut
+
+        monkeypatch.setattr("codegraph.application.reindex.ThreadPoolExecutor", FakeExecutor)
+
+        use_case = IncrementalReindexUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+            config=CodegraphConfig(index=IndexConfig(parallel_workers=2)),
+        )
+        result = use_case.execute(str(tmp_path))
+        assert result.files_reindexed == 2
+        assert len(submit_calls) > 1
+
+    def test_reindex_progress_snapshot_mode_is_reindex(self, mock_store, mock_parser, mock_git, tmp_path):
+        (tmp_path / "test.py").write_text("def updated():\n    pass\n")
+        tracker = IndexProgressTracker()
+        use_case = IncrementalReindexUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+            progress_tracker=tracker,
+        )
+        use_case.execute(str(tmp_path))
+        snap = tracker.get_last()
+        assert snap is not None
+        assert snap.mode == "reindex"
+
     def test_basic_reindex(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def updated():\n    pass\n")
         use_case = IncrementalReindexUseCase(

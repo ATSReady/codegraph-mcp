@@ -4,10 +4,13 @@ from __future__ import annotations
 import dataclasses
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from codegraph.application.partition_planner import IndexPartition, plan_partitions
+from codegraph.domain.index_progress import ProgressState
 from codegraph.domain.models import Symbol, Edge, Chunk
 from codegraph.domain.workspace import (
     IndexMetadata,
@@ -18,6 +21,20 @@ from codegraph.domain.workspace import (
     ParseStatus,
 )
 from codegraph.domain.config import CodegraphConfig
+
+
+@dataclass
+class ProcessedFile:
+    file_path: str
+    symbols: list[Symbol]
+    edges: list[Edge]
+    chunks: list[Chunk]
+    diagnostics: list[FileDiagnostic]
+    parse_status: ParseStatus
+    file_size: int
+    mtime: float
+    failed: bool = False
+    error: str | None = None
 
 
 class IndexRepoUseCase:
@@ -46,141 +63,252 @@ class IndexRepoUseCase:
         start = time.time()
         result = IndexResult()
 
-        # Step 1: Discover files
         files = self._discover_files(repo_root)
         result.files_discovered = len(files)
 
-        # Step 2: Determine generation
         metadata = self._store.get_metadata()
         generation = (metadata.generation + 1) if metadata else 1
 
-        # Step 3: Parse files
+        submodules: list[str] = []
+        if self._git and hasattr(self._git, "list_submodule_paths"):
+            submodules = self._git.list_submodule_paths()
+
+        index_config = self._config.index if self._config else None
+        min_partition_files = getattr(index_config, "min_partition_files", 1)
+        partitions = plan_partitions(
+            files=files,
+            submodules=submodules,
+            min_partition_files=min_partition_files,
+        )
+
+        operation_id: str | None = None
+        if self._progress_tracker is not None:
+            operation_id = self._progress_tracker.start(
+                mode="index",
+                partitions_total=len(partitions),
+                files_total=len(files),
+            )
+            self._progress_tracker.set_state(operation_id, ProgressState.RUNNING)
+
         all_symbols: list[Symbol] = []
         all_edges: list[Edge] = []
         all_chunks: list[Chunk] = []
         all_diagnostics: list[FileDiagnostic] = []
         manifest: dict[str, FileManifestEntry] = {}
 
-        for file_path in files:
-            full_path = os.path.join(repo_root, file_path)
-            try:
-                source = Path(full_path).read_text(encoding="utf-8", errors="replace")
-            except (OSError, UnicodeDecodeError):
-                result.files_failed += 1
-                continue
-
-            symbols, edges, diags = self._parser.parse_file(file_path, source)
-
-            # Stamp generation on symbols and edges (frozen dataclasses)
-            symbols = [
-                dataclasses.replace(s, index_generation=generation) for s in symbols
-            ]
-            edges = [
-                dataclasses.replace(e, index_generation=generation) for e in edges
-            ]
-
-            all_symbols.extend(symbols)
-            all_edges.extend(edges)
-            all_diagnostics.extend(diags)
-
-            # Chunking
-            if self._chunker:
-                chunks = self._chunker.chunk_file(
-                    file_path, source, symbols, generation,
-                )
-                all_chunks.extend(chunks)
-
-            # Build manifest entry
-            parse_status = ParseStatus.OK
-            if diags:
-                _rank = {"ok": 0, "warn": 1, "error": 2}
-                parse_status = max(
-                    (d.parse_status for d in diags),
-                    key=lambda s: _rank.get(s.value, 0),
-                    default=ParseStatus.OK,
-                )
-
-            file_size = 0
-            mtime = 0.0
-            if os.path.exists(full_path):
-                stat = os.stat(full_path)
-                mtime = stat.st_mtime
-                file_size = stat.st_size
-
-            manifest[file_path] = FileManifestEntry(
-                file_path=file_path,
-                language=symbols[0].language if symbols else "unknown",
-                mtime=mtime,
-                size=file_size,
-                parse_status=parse_status,
+        try:
+            processed = self._process_partitions(
+                repo_root=repo_root,
+                partitions=partitions,
+                generation=generation,
+                operation_id=operation_id,
             )
-            result.files_indexed += 1
 
-        # Step 4: Embed chunks if provider available
-        if self._embedder and all_chunks:
-            try:
-                texts = [c.embedding_text or c.content for c in all_chunks]
-                vectors = self._embedder.embed_batch(texts)
-                for i, chunk in enumerate(all_chunks):
-                    if i < len(vectors):
-                        chunk.vector = vectors[i]
-                        chunk.has_vector = True
-                result.chunks_embedded = len(all_chunks)
-            except Exception:
-                result.embedding_errors += 1
+            for item in processed:
+                if item.failed:
+                    result.files_failed += 1
+                    continue
 
-        # Step 5: Write to store
-        if all_symbols:
-            self._store.upsert_symbols(all_symbols)
-        if all_edges:
-            self._store.upsert_edges(all_edges)
-        if all_chunks:
-            self._store.upsert_chunks(all_chunks)
-        if all_diagnostics:
-            self._store.set_diagnostics(all_diagnostics)
+                all_symbols.extend(item.symbols)
+                all_edges.extend(item.edges)
+                all_chunks.extend(item.chunks)
+                all_diagnostics.extend(item.diagnostics)
+                manifest[item.file_path] = FileManifestEntry(
+                    file_path=item.file_path,
+                    language=item.symbols[0].language if item.symbols else "unknown",
+                    mtime=item.mtime,
+                    size=item.file_size,
+                    parse_status=item.parse_status,
+                )
+                result.files_indexed += 1
 
-        result.symbols_count = len(all_symbols)
-        result.edges_count = len(all_edges)
-        result.chunks_count = len(all_chunks)
+            if self._progress_tracker is not None and operation_id:
+                self._progress_tracker.set_state(operation_id, ProgressState.COMMITTING)
 
-        # Step 6: Update metadata
-        head_commit = self._git.get_head_commit() if self._git else None
+            if self._embedder and all_chunks:
+                try:
+                    texts = [c.embedding_text or c.content for c in all_chunks]
+                    vectors = self._embedder.embed_batch(texts)
+                    for i, chunk in enumerate(all_chunks):
+                        if i < len(vectors):
+                            chunk.vector = vectors[i]
+                            chunk.has_vector = True
+                    result.chunks_embedded = len(all_chunks)
+                except Exception:
+                    result.embedding_errors += 1
 
-        embedding_meta = EmbeddingMetadata(
-            provider_id=self._embedder.name if self._embedder else "none",
-            model="none",
-            model_revision=None,
-            runtime="none",
-            device="none",
-            actual_dimension=self._embedder.dimension if self._embedder else 0,
-            requested_dimension=None,
-            config_hash="",
-            input_version=1,
-            normalize="none",
+            if all_symbols:
+                self._store.upsert_symbols(all_symbols)
+            if all_edges:
+                self._store.upsert_edges(all_edges)
+            if all_chunks:
+                self._store.upsert_chunks(all_chunks)
+            if all_diagnostics:
+                self._store.set_diagnostics(all_diagnostics)
+
+            result.symbols_count = len(all_symbols)
+            result.edges_count = len(all_edges)
+            result.chunks_count = len(all_chunks)
+
+            head_commit = self._git.get_head_commit() if self._git else None
+            embedding_meta = EmbeddingMetadata(
+                provider_id=self._embedder.name if self._embedder else "none",
+                model="none",
+                model_revision=None,
+                runtime="none",
+                device="none",
+                actual_dimension=self._embedder.dimension if self._embedder else 0,
+                requested_dimension=None,
+                config_hash="",
+                input_version=1,
+                normalize="none",
+            )
+            workspace_state = WorkspaceState(
+                head_commit=head_commit or "",
+                index_base=head_commit or "",
+                worktree_dirty=False,
+            )
+
+            from codegraph.domain.workspace import RepoStats
+
+            repo_stats = RepoStats.from_manifest(manifest)
+            new_metadata = IndexMetadata(
+                workspace_state=workspace_state,
+                embedding=embedding_meta,
+                generation=generation,
+                file_manifest=manifest,
+                repo_stats=repo_stats,
+            )
+            self._store.set_metadata(new_metadata)
+
+            if self._progress_tracker is not None and operation_id:
+                self._progress_tracker.complete(operation_id)
+
+            result.duration = time.time() - start
+            result.generation = generation
+            return result
+        except Exception as exc:
+            if self._progress_tracker is not None and operation_id:
+                self._progress_tracker.fail(operation_id, str(exc))
+            raise
+
+    def _process_partitions(
+        self,
+        repo_root: str,
+        partitions: list[IndexPartition],
+        generation: int,
+        operation_id: str | None,
+    ) -> list[ProcessedFile]:
+        workers = max(1, getattr(self._config.index, "parallel_workers", 1))
+        if workers == 1 or len(partitions) <= 1:
+            out: list[ProcessedFile] = []
+            for partition in partitions:
+                out.extend(
+                    self._process_partition(
+                        repo_root=repo_root,
+                        partition=partition,
+                        generation=generation,
+                        operation_id=operation_id,
+                    )
+                )
+            return out
+
+        out: list[ProcessedFile] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(
+                    self._process_partition,
+                    repo_root,
+                    partition,
+                    generation,
+                    operation_id,
+                )
+                for partition in partitions
+            ]
+            for future in as_completed(futures):
+                out.extend(future.result())
+        return out
+
+    def _process_partition(
+        self,
+        repo_root: str,
+        partition: IndexPartition,
+        generation: int,
+        operation_id: str | None,
+    ) -> list[ProcessedFile]:
+        if self._progress_tracker is not None and operation_id:
+            self._progress_tracker.mark_partition_started(operation_id, partition.root_path)
+
+        out: list[ProcessedFile] = []
+        for file_path in partition.files:
+            if self._progress_tracker is not None and operation_id:
+                self._progress_tracker.mark_file_started(operation_id, file_path)
+            processed = self._process_file(repo_root, file_path, generation)
+            if self._progress_tracker is not None and operation_id:
+                if processed.failed:
+                    self._progress_tracker.mark_file_failed(
+                        operation_id, processed.error or "failed to process file"
+                    )
+                else:
+                    self._progress_tracker.mark_file_done(operation_id)
+            out.append(processed)
+
+        if self._progress_tracker is not None and operation_id:
+            self._progress_tracker.mark_partition_done(operation_id)
+        return out
+
+    def _process_file(self, repo_root: str, file_path: str, generation: int) -> ProcessedFile:
+        full_path = os.path.join(repo_root, file_path)
+        try:
+            source = Path(full_path).read_text(encoding="utf-8", errors="replace")
+        except (OSError, UnicodeDecodeError) as exc:
+            return ProcessedFile(
+                file_path=file_path,
+                symbols=[],
+                edges=[],
+                chunks=[],
+                diagnostics=[],
+                parse_status=ParseStatus.ERROR,
+                file_size=0,
+                mtime=0.0,
+                failed=True,
+                error=str(exc),
+            )
+
+        symbols, edges, diags = self._parser.parse_file(file_path, source)
+        symbols = [dataclasses.replace(s, index_generation=generation) for s in symbols]
+        edges = [dataclasses.replace(e, index_generation=generation) for e in edges]
+
+        chunks: list[Chunk] = []
+        if self._chunker:
+            chunks = self._chunker.chunk_file(file_path, source, symbols, generation)
+
+        parse_status = ParseStatus.OK
+        if diags:
+            _rank = {"ok": 0, "warn": 1, "error": 2}
+            parse_status = max(
+                (d.parse_status for d in diags),
+                key=lambda s: _rank.get(s.value, 0),
+                default=ParseStatus.OK,
+            )
+
+        file_size = 0
+        mtime = 0.0
+        if os.path.exists(full_path):
+            stat = os.stat(full_path)
+            mtime = stat.st_mtime
+            file_size = stat.st_size
+
+        return ProcessedFile(
+            file_path=file_path,
+            symbols=symbols,
+            edges=edges,
+            chunks=chunks,
+            diagnostics=diags,
+            parse_status=parse_status,
+            file_size=file_size,
+            mtime=mtime,
         )
-
-        workspace_state = WorkspaceState(
-            head_commit=head_commit or "",
-            index_base=head_commit or "",
-            worktree_dirty=False,
-        )
-
-        from codegraph.domain.workspace import RepoStats
-
-        repo_stats = RepoStats.from_manifest(manifest)
-
-        new_metadata = IndexMetadata(
-            workspace_state=workspace_state,
-            embedding=embedding_meta,
-            generation=generation,
-            file_manifest=manifest,
-            repo_stats=repo_stats,
-        )
-        self._store.set_metadata(new_metadata)
-
-        result.duration = time.time() - start
-        result.generation = generation
-        return result
 
     def _discover_files(self, repo_root: str) -> list[str]:
         """Get list of tracked files, filtered by language support."""
@@ -191,7 +319,6 @@ class IndexRepoUseCase:
         else:
             all_files = self._walk_directory(repo_root)
 
-        # Filter to supported languages and exclude patterns
         exclude_patterns = self._config.index.exclude if self._config else []
         supported = []
         for f in all_files:
@@ -204,7 +331,6 @@ class IndexRepoUseCase:
         """Walk directory for files."""
         files = []
         for root, dirs, filenames in os.walk(repo_root):
-            # Skip hidden and common non-source directories
             dirs[:] = [
                 d
                 for d in dirs

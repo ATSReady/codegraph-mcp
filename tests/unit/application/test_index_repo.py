@@ -1,10 +1,13 @@
 """Tests for the full repository indexing use case."""
 import os
+from concurrent.futures import Future
 
 import pytest
 from unittest.mock import MagicMock, PropertyMock
 
 from codegraph.application.index_repo import IndexRepoUseCase, IndexResult
+from codegraph.application.index_progress_tracker import IndexProgressTracker
+from codegraph.domain.config import CodegraphConfig, IndexConfig
 from codegraph.domain.models import Symbol, SymbolKind, Edge, EdgeKind
 from codegraph.domain.workspace import (
     IndexMetadata,
@@ -75,6 +78,74 @@ def mock_git():
 
 
 class TestIndexRepoUseCase:
+    def test_process_file_returns_symbols_edges_chunks(self, mock_store, mock_parser, mock_git, tmp_path):
+        (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        chunker = MagicMock()
+        chunker.chunk_file.return_value = []
+        use_case = IndexRepoUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+            chunker=chunker,
+        )
+        processed = use_case._process_file(str(tmp_path), "test.py", generation=1)
+        assert processed.file_path == "test.py"
+        assert len(processed.symbols) == 1
+        assert len(processed.edges) == 0
+        assert len(processed.chunks) == 0
+
+    def test_index_uses_parallel_workers_when_enabled(self, mock_store, mock_parser, mock_git, tmp_path, monkeypatch):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "src" / "a.py").write_text("def a():\n    pass\n")
+        (tmp_path / "tests" / "b.py").write_text("def b():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["src/a.py", "tests/b.py"]
+
+        submit_calls = []
+
+        class FakeExecutor:
+            def __init__(self, max_workers):
+                self.max_workers = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def submit(self, fn, *args, **kwargs):
+                submit_calls.append((fn, args, kwargs))
+                fut = Future()
+                fut.set_result(fn(*args, **kwargs))
+                return fut
+
+        monkeypatch.setattr("codegraph.application.index_repo.ThreadPoolExecutor", FakeExecutor)
+        config = CodegraphConfig(index=IndexConfig(parallel_workers=2))
+        use_case = IndexRepoUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+            config=config,
+        )
+        use_case.execute(str(tmp_path))
+        assert len(submit_calls) > 1
+
+    def test_index_updates_progress_tracker_states(self, mock_store, mock_parser, mock_git, tmp_path):
+        (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+        mock_git.list_tracked_files.return_value = ["test.py"]
+        tracker = IndexProgressTracker()
+        use_case = IndexRepoUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+            progress_tracker=tracker,
+        )
+        use_case.execute(str(tmp_path))
+        snap = tracker.get_last()
+        assert snap is not None
+        assert snap.state.value == "completed"
+        assert snap.files_done == 1
+
     def test_basic_index(self, mock_store, mock_parser, mock_git, tmp_path):
         (tmp_path / "test.py").write_text("def hello():\n    pass\n")
         mock_git.list_tracked_files.return_value = ["test.py"]
