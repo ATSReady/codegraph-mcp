@@ -1,6 +1,6 @@
 # Known-good versions for CI. Use with: pip install -c constraints.txt -e ".[dev]"
 # Pin persistence and parsing libraries that affect index format stability.
 lancedb==0.6.13
-tree-sitter==0.22.3
+tree-sitter==0.21.3
 tree-sitter-languages==1.10.2
 onnxruntime==1.17.3
