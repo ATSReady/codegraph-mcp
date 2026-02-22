@@ -10,6 +10,13 @@ from codegraph.interface.mcp.server import CodegraphServer
 
 
 class TestCodegraphServer:
+    def test_server_accepts_progress_tracker(self):
+        from codegraph.application.index_progress_tracker import IndexProgressTracker
+
+        tracker = IndexProgressTracker()
+        server = CodegraphServer(progress_tracker=tracker)
+        assert server is not None
+
     def test_server_creation(self):
         server = CodegraphServer()
         assert server._server is not None
