@@ -15,6 +15,15 @@ class GetSymbolsUseCase:
     def __init__(self, store: SymbolStore) -> None:
         self._store = store
 
+    def _get_naive_tokens(self, file_path: str) -> int:
+        """Get naive token baseline from actual file size in index."""
+        meta = self._store.get_metadata()
+        if meta and meta.repo_stats and file_path in meta.repo_stats.per_file_tokens:
+            return meta.repo_stats.per_file_tokens[file_path]
+        if meta and meta.repo_stats:
+            return meta.repo_stats.median_file_tokens
+        return 0
+
     def execute(
         self,
         file_path: Optional[str] = None,
@@ -33,10 +42,11 @@ class GetSymbolsUseCase:
             pattern = re.compile(name_pattern, re.IGNORECASE)
             symbols = [s for s in symbols if pattern.search(s.name)]
 
+        meta = self._store.get_metadata()
         if file_path:
-            naive_tokens = max(500, len(symbols) * 200)
+            naive_tokens = self._get_naive_tokens(file_path)
         else:
-            naive_tokens = max(1000, len(symbols) * 200)
+            naive_tokens = meta.repo_stats.total_tokens if meta and meta.repo_stats else 0
 
         return {
             "symbols": [self._serialize(s) for s in symbols],

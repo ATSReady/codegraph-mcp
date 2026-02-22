@@ -12,6 +12,15 @@ class GetFileSummaryUseCase:
     def __init__(self, store: SymbolStore) -> None:
         self._store = store
 
+    def _get_naive_tokens(self, file_path: str) -> int:
+        """Get naive token baseline from actual file size in index."""
+        meta = self._store.get_metadata()
+        if meta and meta.repo_stats and file_path in meta.repo_stats.per_file_tokens:
+            return meta.repo_stats.per_file_tokens[file_path]
+        if meta and meta.repo_stats:
+            return meta.repo_stats.median_file_tokens
+        return 0
+
     def execute(self, file_path: str) -> dict:
         symbols, _ = self._store.query_symbols(
             file_path=file_path, max_results=500,
@@ -35,5 +44,5 @@ class GetFileSummaryUseCase:
             "import_count": len(
                 [e for e in edges if e.kind == EdgeKind.IMPORTS]
             ),
-            "_naive_tokens": max(500, len(symbols) * 200),
+            "_naive_tokens": self._get_naive_tokens(file_path),
         }

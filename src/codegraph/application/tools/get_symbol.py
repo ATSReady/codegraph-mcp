@@ -14,6 +14,15 @@ class GetSymbolUseCase:
     def __init__(self, store: SymbolStore) -> None:
         self._store = store
 
+    def _get_naive_tokens(self, file_path: str) -> int:
+        """Get naive token baseline from actual file size in index."""
+        meta = self._store.get_metadata()
+        if meta and meta.repo_stats and file_path in meta.repo_stats.per_file_tokens:
+            return meta.repo_stats.per_file_tokens[file_path]
+        if meta and meta.repo_stats:
+            return meta.repo_stats.median_file_tokens
+        return 0
+
     def execute(
         self,
         symbol_id: Optional[str] = None,
@@ -27,8 +36,8 @@ class GetSymbolUseCase:
             return {"error": "Provide symbol_id or symbol_key"}
 
         if symbol is None:
-            return {"symbol": None, "_naive_tokens": 3000}
-        return {"symbol": self._serialize(symbol), "_naive_tokens": 3000}
+            return {"symbol": None, "_naive_tokens": 0}
+        return {"symbol": self._serialize(symbol), "_naive_tokens": self._get_naive_tokens(symbol.file_path)}
 
     @staticmethod
     def _serialize(s: Symbol) -> dict:

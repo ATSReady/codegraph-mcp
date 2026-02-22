@@ -14,6 +14,15 @@ class GetImportsUseCase:
     def __init__(self, store: SymbolStore) -> None:
         self._store = store
 
+    def _get_naive_tokens(self, file_path: str) -> int:
+        """Get naive token baseline from actual file size in index."""
+        meta = self._store.get_metadata()
+        if meta and meta.repo_stats and file_path in meta.repo_stats.per_file_tokens:
+            return meta.repo_stats.per_file_tokens[file_path]
+        if meta and meta.repo_stats:
+            return meta.repo_stats.median_file_tokens
+        return 0
+
     def execute(
         self,
         file_path: Optional[str] = None,
@@ -24,6 +33,13 @@ class GetImportsUseCase:
             file_path=file_path,
             kind=EdgeKind.IMPORTS,
         )
+
+        if file_path:
+            naive_tokens = self._get_naive_tokens(file_path)
+        else:
+            meta = self._store.get_metadata()
+            naive_tokens = meta.repo_stats.median_file_tokens if meta and meta.repo_stats else 0
+
         return {
             "imports": [
                 {
@@ -37,5 +53,5 @@ class GetImportsUseCase:
                 for e in edges
             ],
             "count": len(edges),
-            "_naive_tokens": max(500, len(edges) * 150),
+            "_naive_tokens": naive_tokens,
         }
