@@ -10,6 +10,7 @@ from codegraph.interface.cli.main import cli
 
 # Import command modules so they register with the cli group
 import codegraph.interface.cli.index_cmd  # noqa: F401
+import codegraph.interface.cli.install_cmd  # noqa: F401
 import codegraph.interface.cli.status_cmd  # noqa: F401
 
 
@@ -36,6 +37,43 @@ class TestCliInit:
         result = runner.invoke(cli, ["init", "--repo-root", str(tmp_path)])
         assert result.exit_code == 0
         assert "already exists" in result.output
+
+
+class TestCliInstall:
+    def test_install_configures_supported_clients(self, runner, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("PATH", "")
+
+        result = runner.invoke(
+            cli,
+            [
+                "install",
+                "--timeout-sec",
+                "30",
+                "--codegraph-bin",
+                "/usr/local/bin/codegraph",
+            ],
+        )
+        assert result.exit_code == 0, f"stdout: {result.output}\nException: {result.exception}"
+        assert "Configured codegraph MCP" in result.output
+        assert "timeout to 30s" in result.output
+
+        codex_cfg = (tmp_path / ".codex" / "config.toml").read_text()
+        assert "[mcp_servers.codegraph]" in codex_cfg
+        assert 'command = "/usr/local/bin/codegraph"' in codex_cfg
+        assert 'args = ["serve"]' in codex_cfg
+        assert "startup_timeout_sec = 30" in codex_cfg
+
+        claude_cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+        assert claude_cfg["env"]["MCP_TIMEOUT"] == "30000"
+
+        gemini_cfg = json.loads((tmp_path / ".gemini" / "settings.json").read_text())
+        assert gemini_cfg["mcpServers"]["codegraph"]["command"] == "/usr/local/bin/codegraph"
+        assert gemini_cfg["mcpServers"]["codegraph"]["startup_timeout_sec"] == 30
+
+        opencode_cfg = json.loads((tmp_path / ".config" / "opencode" / "opencode.json").read_text())
+        assert opencode_cfg["mcp"]["codegraph"]["command"] == ["/usr/local/bin/codegraph", "serve"]
+        assert opencode_cfg["mcp"]["codegraph"]["startup_timeout_sec"] == 30
 
 
 class TestCliStatus:

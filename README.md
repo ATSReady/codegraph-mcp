@@ -20,7 +20,14 @@ cd codegraph-mcp
 
 This will:
 1. Install `codegraph` globally (via pipx, uv, or pip)
-2. Register it as an MCP server in **Claude Code**, **Codex CLI**, and **Gemini CLI** (whichever are installed)
+2. Register it as an MCP server in **Claude Code**, **Codex CLI**, **Gemini CLI**, and **OpenCode**
+3. Set MCP startup timeout to **30 seconds**
+
+You can also run the installer from the CLI after package install:
+
+```bash
+codegraph install
+```
 
 ## Manual Install
 
@@ -50,7 +57,11 @@ pip install --user /path/to/codegraph-mcp
 pip install -e ".[dev]"
 ```
 
-### 2. Configure AI clients
+### 2. Configure AI clients (global, recommended)
+
+```bash
+codegraph install --timeout-sec 30
+```
 
 #### Claude Code
 
@@ -84,6 +95,7 @@ Or add to `~/.codex/config.toml`:
 [mcp_servers.codegraph]
 command = "codegraph"
 args = ["serve"]
+startup_timeout_sec = 30
 ```
 
 #### Gemini CLI
@@ -99,7 +111,24 @@ Or add to `~/.gemini/settings.json`:
   "mcpServers": {
     "codegraph": {
       "command": "codegraph",
-      "args": ["serve"]
+      "args": ["serve"],
+      "startup_timeout_sec": 30
+    }
+  }
+}
+```
+
+#### OpenCode
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "codegraph": {
+      "type": "local",
+      "command": ["codegraph", "serve"],
+      "startup_timeout_sec": 30
     }
   }
 }
@@ -132,13 +161,7 @@ codegraph init          # creates .codegraph/ config
 codegraph index         # builds the full code graph
 ```
 
-### Reindex after changes
-
-```bash
-codegraph reindex       # incremental — only changed files
-codegraph reindex --progress
-codegraph index --force # full rebuild
-```
+`codegraph index` is incremental by default and only reindexes changed files.
 
 ### Live progress
 

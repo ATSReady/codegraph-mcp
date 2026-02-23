@@ -66,6 +66,7 @@ def main():
     # Import command modules so their @cli.command() decorators register
     import codegraph.interface.cli.hooks_cmd  # noqa: F401
     import codegraph.interface.cli.index_cmd  # noqa: F401
+    import codegraph.interface.cli.install_cmd  # noqa: F401
     import codegraph.interface.cli.status_cmd  # noqa: F401
 
     cli()

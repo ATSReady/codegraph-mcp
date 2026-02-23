@@ -3,7 +3,7 @@ set -euo pipefail
 
 # codegraph-mcp installer
 # Installs the package globally and configures it as an MCP server
-# for Claude Code, Codex CLI, and Gemini CLI.
+# for Claude Code, Codex CLI, Gemini CLI, and OpenCode.
 
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -53,74 +53,79 @@ info "codegraph binary: $CODEGRAPH_BIN"
 
 MCP_CMD="$CODEGRAPH_BIN"
 MCP_ARGS='["serve"]'
+MCP_STARTUP_TIMEOUT_SEC="${MCP_STARTUP_TIMEOUT_SEC:-30}"
 
 configure_claude() {
     step "Configuring Claude Code..."
 
-    if ! command -v claude &>/dev/null; then
-        warn "Claude Code CLI not found, skipping"
-        return
+    if command -v claude &>/dev/null; then
+        claude mcp add-json codegraph "{
+            \"type\": \"stdio\",
+            \"command\": \"$MCP_CMD\",
+            \"args\": [\"serve\"]
+        }" --scope user 2>/dev/null && info "Added to Claude Code (user scope)" || {
+            warn "claude mcp add-json failed — you may need to add it manually"
+            echo "  Run: claude mcp add --scope user codegraph -- $MCP_CMD serve"
+        }
+    else
+        warn "Claude Code CLI not found; updating settings file only"
     fi
 
-    claude mcp add-json codegraph "{
-        \"type\": \"stdio\",
-        \"command\": \"$MCP_CMD\",
-        \"args\": [\"serve\"]
-    }" --scope user 2>/dev/null && info "Added to Claude Code (user scope)" || {
-        warn "claude mcp add-json failed — you may need to add it manually"
-        echo "  Run: claude mcp add --scope user codegraph -- $MCP_CMD serve"
-    }
+    CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+    mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+    if [ -f "$CLAUDE_SETTINGS" ]; then
+        python3 -c "
+import json
+path = '$CLAUDE_SETTINGS'
+with open(path, encoding='utf-8') as f:
+    data = json.load(f)
+data.setdefault('env', {})
+data['env']['MCP_TIMEOUT'] = str(int('$MCP_STARTUP_TIMEOUT_SEC') * 1000)
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null && info "Set Claude MCP timeout to ${MCP_STARTUP_TIMEOUT_SEC}s"
+    fi
 }
 
 configure_codex() {
     step "Configuring Codex CLI..."
 
-    if ! command -v codex &>/dev/null; then
-        warn "Codex CLI not found, skipping"
-        return
-    fi
-
     CODEX_CONFIG="$HOME/.codex/config.toml"
     mkdir -p "$(dirname "$CODEX_CONFIG")"
 
-    if [ -f "$CODEX_CONFIG" ] && grep -q '\[mcp_servers\.codegraph\]' "$CODEX_CONFIG" 2>/dev/null; then
-        info "Already configured in $CODEX_CONFIG"
-        return
-    fi
-
-    cat >> "$CODEX_CONFIG" <<EOF
-
-[mcp_servers.codegraph]
-command = "$MCP_CMD"
-args = ["serve"]
-EOF
-    info "Added to $CODEX_CONFIG"
+    python3 -c "
+from pathlib import Path
+import re
+path = Path('$CODEX_CONFIG')
+path.parent.mkdir(parents=True, exist_ok=True)
+block = (
+    '[mcp_servers.codegraph]\\n'
+    f'command = \"${MCP_CMD}\"\\n'
+    'args = [\"serve\"]\\n'
+    f'startup_timeout_sec = ${MCP_STARTUP_TIMEOUT_SEC}\\n'
+)
+if path.exists():
+    text = path.read_text(encoding='utf-8')
+else:
+    text = ''
+pat = r'(?ms)^\\[mcp_servers\\.codegraph\\]\\n(?:.*\\n)*?(?=^\\[|\\Z)'
+if re.search(pat, text):
+    text = re.sub(pat, block + '\\n', text)
+else:
+    if text and not text.endswith('\\n'):
+        text += '\\n'
+    text += '\\n' + block
+path.write_text(text, encoding='utf-8')
+" && info "Configured $CODEX_CONFIG (timeout ${MCP_STARTUP_TIMEOUT_SEC}s)"
 }
 
 configure_gemini() {
     step "Configuring Gemini CLI..."
 
-    if ! command -v gemini &>/dev/null; then
-        warn "Gemini CLI not found, skipping"
-        return
-    fi
-
     GEMINI_CONFIG="$HOME/.gemini/settings.json"
     mkdir -p "$(dirname "$GEMINI_CONFIG")"
 
     if [ -f "$GEMINI_CONFIG" ]; then
-        # Check if codegraph already configured
-        if python3 -c "
-import json, sys
-with open('$GEMINI_CONFIG') as f:
-    data = json.load(f)
-sys.exit(0 if 'codegraph' in data.get('mcpServers', {}) else 1)
-" 2>/dev/null; then
-            info "Already configured in $GEMINI_CONFIG"
-            return
-        fi
-
-        # Merge into existing config
         python3 -c "
 import json
 with open('$GEMINI_CONFIG') as f:
@@ -128,11 +133,13 @@ with open('$GEMINI_CONFIG') as f:
 data.setdefault('mcpServers', {})
 data['mcpServers']['codegraph'] = {
     'command': '$MCP_CMD',
-    'args': ['serve']
+    'args': ['serve'],
+    'startup_timeout_sec': int('$MCP_STARTUP_TIMEOUT_SEC'),
+    'startupTimeoutSec': int('$MCP_STARTUP_TIMEOUT_SEC')
 }
 with open('$GEMINI_CONFIG', 'w') as f:
     json.dump(data, f, indent=2)
-" && info "Added to $GEMINI_CONFIG"
+" && info "Configured $GEMINI_CONFIG (timeout ${MCP_STARTUP_TIMEOUT_SEC}s)"
     else
         # Create new config
         python3 -c "
@@ -141,7 +148,9 @@ data = {
     'mcpServers': {
         'codegraph': {
             'command': '$MCP_CMD',
-            'args': ['serve']
+            'args': ['serve'],
+            'startup_timeout_sec': int('$MCP_STARTUP_TIMEOUT_SEC'),
+            'startupTimeoutSec': int('$MCP_STARTUP_TIMEOUT_SEC')
         }
     }
 }
@@ -151,9 +160,37 @@ with open('$GEMINI_CONFIG', 'w') as f:
     fi
 }
 
+configure_opencode() {
+    step "Configuring OpenCode..."
+
+    OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+    mkdir -p "$(dirname "$OPENCODE_CONFIG")"
+
+    python3 -c "
+import json
+from pathlib import Path
+path = Path('$OPENCODE_CONFIG')
+if path.exists():
+    with open(path, encoding='utf-8') as f:
+        data = json.load(f)
+else:
+    data = {}
+data.setdefault('mcp', {})
+data['mcp']['codegraph'] = {
+    'type': 'local',
+    'command': ['$MCP_CMD', 'serve'],
+    'startup_timeout_sec': int('$MCP_STARTUP_TIMEOUT_SEC'),
+    'startupTimeoutSec': int('$MCP_STARTUP_TIMEOUT_SEC'),
+}
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+" && info "Configured $OPENCODE_CONFIG (timeout ${MCP_STARTUP_TIMEOUT_SEC}s)"
+}
+
 configure_claude
 configure_codex
 configure_gemini
+configure_opencode
 
 # ── Done ──────────────────────────────────────────────────────────────
 
@@ -167,6 +204,11 @@ echo "    4. codegraph serve       # starts MCP server (used by AI clients)"
 echo ""
 echo "  The MCP server is now available in any configured AI client."
 echo "  Each client will start codegraph automatically when needed."
+echo "  Startup timeout configured to ${MCP_STARTUP_TIMEOUT_SEC}s."
+echo ""
+echo "  If startup times out in your coding client:"
+echo "    1. Exit the client"
+echo "    2. Run in your repo: codegraph init && codegraph index --progress"
 echo ""
 echo "  To use with a specific repo, pass --repo-root:"
 echo "    codegraph serve --repo-root /path/to/repo"

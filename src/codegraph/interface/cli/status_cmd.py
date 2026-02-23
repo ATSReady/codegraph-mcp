@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 from dataclasses import asdict
 
@@ -273,7 +274,20 @@ def serve(repo_root, log_level, no_watch):
     repo_root = os.path.abspath(repo_root)
     logger = logging.getLogger("codegraph")
     logger.info("Starting MCP server for %s", repo_root)
-    bootstrap_repo_index(repo_root, logger)
+    timeout_hint = threading.Timer(
+        25.0,
+        lambda: logger.warning(
+            "Startup is taking longer than expected. "
+            "If your client times out, exit it and run: "
+            "codegraph init && codegraph index --progress"
+        ),
+    )
+    timeout_hint.daemon = True
+    timeout_hint.start()
+    try:
+        bootstrap_repo_index(repo_root, logger)
+    finally:
+        timeout_hint.cancel()
 
     from codegraph.infrastructure.storage.lancedb_store import LanceDBStore
     from codegraph.infrastructure.parsers.tree_sitter_parser import TreeSitterParser
