@@ -23,4 +23,6 @@ class IndexProgressSnapshot:
     files_failed: int = 0
     current_partition: str | None = None
     current_file: str | None = None
+    partition_files_total: dict[str, int] = field(default_factory=dict)
+    partition_files_done: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)

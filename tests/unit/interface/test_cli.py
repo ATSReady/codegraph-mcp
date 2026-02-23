@@ -126,3 +126,5 @@ class TestCliIndexProgress:
         result = runner.invoke(cli, ["index", "--no-embed", "--progress", "--repo-root", str(tmp_path)])
         assert result.exit_code == 0
         assert "progress" in result.output.lower()
+        assert "[" in result.output and "]" in result.output
+        assert "overall" in result.output.lower()

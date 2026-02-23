@@ -166,3 +166,24 @@ class SubprocessGitClient:
             if len(parts) >= 2:
                 paths.append(parts[1])
         return sorted(set(paths))
+
+    def filter_gitignored_files(self, paths: list[str]) -> list[str]:
+        """Remove files ignored by git (.gitignore, excludes, core.excludesFile)."""
+        if not paths:
+            return []
+        # check-ignore returns 0 when at least one path is ignored, 1 when none are ignored.
+        payload = "\n".join(paths) + "\n"
+        result = subprocess.run(
+            ["git", "check-ignore", "--no-index", "--stdin"],
+            cwd=self._root,
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode not in (0, 1):
+            return paths
+        ignored = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        if not ignored:
+            return paths
+        return [p for p in paths if p not in ignored]

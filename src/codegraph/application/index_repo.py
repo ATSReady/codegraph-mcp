@@ -88,7 +88,12 @@ class IndexRepoUseCase:
                 partitions_total=len(partitions),
                 files_total=len(files),
             )
+            self._progress_tracker.register_partitions(
+                operation_id,
+                {p.root_path: len(p.files) for p in partitions},
+            )
             self._progress_tracker.set_state(operation_id, ProgressState.RUNNING)
+            result.operation_id = operation_id
 
         all_symbols: list[Symbol] = []
         all_edges: list[Edge] = []
@@ -247,10 +252,15 @@ class IndexRepoUseCase:
             if self._progress_tracker is not None and operation_id:
                 if processed.failed:
                     self._progress_tracker.mark_file_failed(
-                        operation_id, processed.error or "failed to process file"
+                        operation_id,
+                        processed.error or "failed to process file",
+                        partition=partition.root_path,
                     )
                 else:
-                    self._progress_tracker.mark_file_done(operation_id)
+                    self._progress_tracker.mark_file_done(
+                        operation_id,
+                        partition=partition.root_path,
+                    )
             out.append(processed)
 
         if self._progress_tracker is not None and operation_id:
@@ -316,6 +326,8 @@ class IndexRepoUseCase:
 
         if self._git and self._git.is_git_repo():
             all_files = self._git.list_tracked_files()
+            if hasattr(self._git, "filter_gitignored_files"):
+                all_files = self._git.filter_gitignored_files(all_files)
         else:
             all_files = self._walk_directory(repo_root)
 
@@ -368,3 +380,4 @@ class IndexResult:
     embedding_errors: int = 0
     generation: int = 0
     duration: float = 0.0
+    operation_id: str | None = None

@@ -74,6 +74,7 @@ def mock_git():
     git.is_git_repo.return_value = True
     git.get_head_commit.return_value = "abc123"
     git.list_tracked_files.return_value = []
+    git.filter_gitignored_files.side_effect = lambda files: files
     return git
 
 
@@ -245,6 +246,21 @@ class TestIndexRepoUseCase:
         result = use_case.execute(str(tmp_path))
         # vendor/** is in the default exclude list
         assert result.files_discovered >= 1
+
+    def test_discovery_filters_gitignored_files(self, mock_store, mock_parser, mock_git, tmp_path):
+        (tmp_path / "main.py").write_text("x = 1\n")
+        (tmp_path / "ignored.py").write_text("x = 2\n")
+        mock_git.list_tracked_files.return_value = ["main.py", "ignored.py"]
+        mock_git.filter_gitignored_files.side_effect = None
+        mock_git.filter_gitignored_files.return_value = ["main.py"]
+        use_case = IndexRepoUseCase(
+            store=mock_store,
+            parser=mock_parser,
+            git_client=mock_git,
+        )
+        discovered = use_case._discover_files(str(tmp_path))
+        assert discovered == ["main.py"]
+        mock_git.filter_gitignored_files.assert_called_once()
 
     def test_result_dataclass_defaults(self):
         r = IndexResult()

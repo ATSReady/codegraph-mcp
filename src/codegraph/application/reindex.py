@@ -92,7 +92,12 @@ class IncrementalReindexUseCase:
                     partitions_total=len(partitions),
                     files_total=len(modified_files),
                 )
+                self._progress_tracker.register_partitions(
+                    operation_id,
+                    {p.root_path: len(p.files) for p in partitions},
+                )
                 self._progress_tracker.set_state(operation_id, ProgressState.RUNNING)
+                result.operation_id = operation_id
 
             processed = self._process_partitions(
                 repo_root=repo_root,
@@ -204,9 +209,13 @@ class IncrementalReindexUseCase:
                     self._progress_tracker.mark_file_failed(
                         operation_id,
                         processed.error or "failed to process file",
+                        partition=partition.root_path,
                     )
                 else:
-                    self._progress_tracker.mark_file_done(operation_id)
+                    self._progress_tracker.mark_file_done(
+                        operation_id,
+                        partition=partition.root_path,
+                    )
 
             out.append(processed)
 
@@ -273,3 +282,4 @@ class ReindexResult:
     embedding_errors: int = 0
     needs_full_index: bool = False
     duration: float = 0.0
+    operation_id: str | None = None

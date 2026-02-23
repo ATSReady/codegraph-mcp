@@ -84,3 +84,12 @@ class TestSubprocessGitClient:
         client = SubprocessGitClient(str(git_repo))
         client._run = MagicMock(return_value=MagicMock(returncode=0, stdout=" 123abc libs/a (heads/main)\n+456def deps/b (heads/dev)\n"))
         assert client.list_submodule_paths() == ["deps/b", "libs/a"]
+
+    def test_filter_gitignored_files(self, git_repo):
+        client = SubprocessGitClient(str(git_repo))
+        (git_repo / ".gitignore").write_text("ignored.py\n")
+        subprocess.run(["git", "add", ".gitignore"], cwd=git_repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "ignore"], cwd=git_repo, capture_output=True)
+        filtered = client.filter_gitignored_files(["file.py", "ignored.py"])
+        assert "file.py" in filtered
+        assert "ignored.py" not in filtered

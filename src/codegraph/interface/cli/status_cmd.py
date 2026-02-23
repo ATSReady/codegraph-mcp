@@ -12,17 +12,44 @@ import click
 from codegraph.application.index_progress_tracker import IndexProgressTracker
 from codegraph.interface.cli.main import cli
 
-_PROGRESS_TRACKER = IndexProgressTracker()
+_PROGRESS_TRACKERS: dict[str, IndexProgressTracker] = {}
 
 
-def get_progress_tracker() -> IndexProgressTracker:
-    return _PROGRESS_TRACKER
+def get_progress_tracker(repo_root: str | None = None) -> IndexProgressTracker:
+    key = os.path.abspath(repo_root or ".")
+    tracker = _PROGRESS_TRACKERS.get(key)
+    if tracker is not None:
+        return tracker
+    persist_path = os.path.join(key, ".codegraph", "index-progress.json")
+    tracker = IndexProgressTracker(persist_path=persist_path)
+    _PROGRESS_TRACKERS[key] = tracker
+    return tracker
 
 
 def format_progress_snapshot(snapshot) -> dict:
     if snapshot is None:
         return {"active": False, "progress": None}
     return {"active": True, "progress": asdict(snapshot)}
+
+
+def read_progress_file(repo_root: str) -> dict | None:
+    progress_path = os.path.join(repo_root, ".codegraph", "index-progress.json")
+    if not os.path.exists(progress_path):
+        return None
+    try:
+        with open(progress_path, encoding="utf-8") as f:
+            raw = json.load(f)
+        active_id = raw.get("active_operation_id")
+        last_id = raw.get("last_operation_id")
+        snapshots = raw.get("snapshots", {})
+        selected = snapshots.get(active_id) if active_id else None
+        if selected is None and last_id:
+            selected = snapshots.get(last_id)
+        if selected is None:
+            return {"active": False, "progress": None}
+        return {"active": True, "progress": selected}
+    except Exception:
+        return None
 
 
 @cli.command()
@@ -83,12 +110,16 @@ def status(as_json, exit_stale, repo_root):
 @click.option("--repo-root", default=".", help="Repository root")
 def progress(as_json, watch, interval_ms, repo_root):
     """Show active or most recent indexing progress."""
-    _ = os.path.abspath(repo_root)
-    tracker = get_progress_tracker()
+    repo_root = os.path.abspath(repo_root)
+    tracker = get_progress_tracker(repo_root)
 
     def _emit_once() -> dict:
         snapshot = tracker.get_active() or tracker.get_last()
         payload = format_progress_snapshot(snapshot)
+        if not payload["active"]:
+            file_payload = read_progress_file(repo_root)
+            if file_payload is not None:
+                payload = file_payload
         if as_json:
             click.echo(json.dumps(payload, indent=2))
         else:

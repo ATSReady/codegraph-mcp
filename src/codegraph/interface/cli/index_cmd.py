@@ -3,10 +3,50 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 
 import click
 
 from codegraph.interface.cli.main import cli
+
+
+def _render_progress_line(snapshot) -> str:
+    def _bar(done: int, total: int, width: int = 20) -> str:
+        total = max(total, 1)
+        done = max(0, min(done, total))
+        filled = int((done / total) * width)
+        return "[" + ("#" * filled) + ("-" * (width - filled)) + "]"
+
+    partition = snapshot.current_partition
+    if partition is None and snapshot.partition_files_total:
+        # If nothing is currently active (e.g., at completion), show a stable partition bar.
+        partition = sorted(snapshot.partition_files_total.keys())[0]
+    if partition:
+        part_total = snapshot.partition_files_total.get(partition, 0)
+        part_done = snapshot.partition_files_done.get(partition, 0)
+        part_label = f"{partition} {_bar(part_done, part_total)} {part_done}/{part_total}"
+    else:
+        part_label = "n/a"
+
+    return (
+        f"progress: {snapshot.mode} {snapshot.state.value} "
+        f"partition {part_label} "
+        f"overall {snapshot.files_done}/{snapshot.files_total} "
+        f"failed {snapshot.files_failed}"
+    )
+
+
+def _stream_progress(tracker, stop_event: threading.Event) -> None:
+    last_line = None
+    while not stop_event.is_set():
+        snap = tracker.get_active() or tracker.get_last()
+        if snap is not None:
+            line = _render_progress_line(snap)
+            if line != last_line:
+                click.echo(line)
+                last_line = line
+        time.sleep(0.1)
 
 
 @cli.command()
@@ -80,8 +120,7 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
             from codegraph.application.index_repo import IndexRepoUseCase
             from codegraph.interface.cli.status_cmd import get_progress_tracker
 
-            tracker = get_progress_tracker()
-            op_id = tracker.start(mode="index")
+            tracker = get_progress_tracker(repo_root)
             use_case = IndexRepoUseCase(
                 store=store,
                 parser=parser,
@@ -93,11 +132,19 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
 
             if verbose:
                 click.echo(f"Indexing {repo_root}...")
+            stop_event = threading.Event()
+            progress_thread = None
             if show_progress:
-                click.echo("progress: index started")
-
-            result = use_case.execute(repo_root, force=force)
-            tracker.complete(op_id)
+                progress_thread = threading.Thread(
+                    target=_stream_progress, args=(tracker, stop_event), daemon=True
+                )
+                progress_thread.start()
+            try:
+                result = use_case.execute(repo_root, force=force)
+            finally:
+                if show_progress and progress_thread is not None:
+                    stop_event.set()
+                    progress_thread.join(timeout=1.0)
 
             click.echo(
                 f"Indexed {result.files_indexed} files: "
@@ -105,12 +152,9 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
                 f"{result.chunks_count} chunks (gen {result.generation})"
             )
             if show_progress:
-                snap = tracker.get(op_id)
+                snap = tracker.get(result.operation_id) if result.operation_id else tracker.get_last()
                 if snap:
-                    click.echo(
-                        f"progress: {snap.state.value} files {snap.files_done}/{snap.files_total} "
-                        f"failed {snap.files_failed}"
-                    )
+                    click.echo(_render_progress_line(snap))
             if result.files_failed > 0:
                 click.echo(f"  {result.files_failed} files failed", err=True)
             if result.chunks_embedded > 0:
@@ -148,8 +192,7 @@ def reindex(verbose, show_progress, repo_root):
             parser = TreeSitterParser()
             git = SubprocessGitClient(repo_root)
             chunker = CodeChunker()
-            tracker = get_progress_tracker()
-            op_id = tracker.start(mode="reindex")
+            tracker = get_progress_tracker(repo_root)
 
             use_case = IncrementalReindexUseCase(
                 store=store,
@@ -158,8 +201,19 @@ def reindex(verbose, show_progress, repo_root):
                 chunker=chunker,
                 progress_tracker=tracker,
             )
-            result = use_case.execute(repo_root)
-            tracker.complete(op_id)
+            stop_event = threading.Event()
+            progress_thread = None
+            if show_progress:
+                progress_thread = threading.Thread(
+                    target=_stream_progress, args=(tracker, stop_event), daemon=True
+                )
+                progress_thread.start()
+            try:
+                result = use_case.execute(repo_root)
+            finally:
+                if show_progress and progress_thread is not None:
+                    stop_event.set()
+                    progress_thread.join(timeout=1.0)
 
             if result.needs_full_index:
                 click.echo("No existing index. Run 'codegraph index' first.")
@@ -171,12 +225,9 @@ def reindex(verbose, show_progress, repo_root):
                 f"(gen {result.generation})"
             )
             if show_progress:
-                snap = tracker.get(op_id)
+                snap = tracker.get(result.operation_id) if result.operation_id else tracker.get_last()
                 if snap:
-                    click.echo(
-                        f"progress: {snap.state.value} files {snap.files_done}/{snap.files_total} "
-                        f"failed {snap.files_failed}"
-                    )
+                    click.echo(_render_progress_line(snap))
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

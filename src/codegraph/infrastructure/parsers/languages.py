@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import warnings
 
 import tree_sitter_languages  # type: ignore[import-untyped]
 
@@ -46,7 +47,13 @@ def get_grammar(language: str) -> object:
 
     Returns a tree_sitter.Language instance.
     """
-    return tree_sitter_languages.get_language(language)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Language\(path, name\) is deprecated.*",
+            category=FutureWarning,
+        )
+        return tree_sitter_languages.get_language(language)
 
 
 def get_parser(language: str) -> object:
@@ -54,7 +61,13 @@ def get_parser(language: str) -> object:
 
     Returns a tree_sitter.Parser pre-configured with the language grammar.
     """
-    return tree_sitter_languages.get_parser(language)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Language\(path, name\) is deprecated.*",
+            category=FutureWarning,
+        )
+        return tree_sitter_languages.get_parser(language)
 
 
 def available_languages() -> list[dict]:
