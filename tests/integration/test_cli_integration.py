@@ -148,6 +148,28 @@ class TestIndexCommand:
         ])
         assert result.exit_code == 2
 
+    def test_index_auto_breaks_stale_lock(self, runner, git_repo):
+        """``codegraph index`` should auto-break stale locks even without the flag."""
+        import socket
+
+        codegraph_dir = git_repo / ".codegraph"
+        codegraph_dir.mkdir(exist_ok=True)
+        lock_file = codegraph_dir / "index.lock"
+        lock_info = {
+            "pid": 2147483647,  # dead PID on this host
+            "hostname": socket.gethostname(),
+            "user": "someone",
+            "acquired_at": "2024-01-01T00:00:00+00:00",
+            "command": "codegraph index",
+        }
+        lock_file.write_text(json.dumps(lock_info))
+
+        result = runner.invoke(cli, [
+            "index", "--no-prompt", "--no-embed", "--repo-root", str(git_repo),
+        ])
+        assert result.exit_code == 0, f"stdout: {result.output}\nException: {result.exception}"
+        assert "Broke stale lock." in result.output
+
     def test_index_force_reindex(self, runner, git_repo):
         """``codegraph index --force`` should rebuild even if index exists."""
         # First index

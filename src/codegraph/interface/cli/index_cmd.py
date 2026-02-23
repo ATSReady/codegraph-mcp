@@ -130,12 +130,13 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
     lock = IndexLock(lock_path)
 
     if lock.is_locked():
-        if break_stale_lock:
-            if lock.break_if_stale():
-                click.echo("Broke stale lock.")
-            else:
-                click.echo("Lock is active, cannot break.", err=True)
-                sys.exit(2)
+        # Always try safe stale-lock cleanup first (dead PID / invalid lock / old lock).
+        stale_broken = lock.break_if_stale()
+        if stale_broken:
+            click.echo("Broke stale lock.")
+        elif break_stale_lock:
+            click.echo("Lock is active, cannot break.", err=True)
+            sys.exit(2)
         else:
             click.echo("Index is locked. Use --break-stale-lock to force.", err=True)
             sys.exit(2)
@@ -271,4 +272,3 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
-

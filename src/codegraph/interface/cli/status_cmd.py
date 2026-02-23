@@ -71,6 +71,13 @@ def bootstrap_repo_index(repo_root: str, logger) -> None:
         logger.info("Created default config at %s", config_path)
 
     lock = IndexLock(os.path.join(codegraph_dir, "index.lock"))
+    if lock.is_locked():
+        if lock.break_if_stale():
+            logger.warning("Broke stale index lock during startup bootstrap.")
+        else:
+            logger.info("Index lock is active; skipping startup bootstrap index.")
+            return
+
     with lock:
         index_dir = os.path.join(codegraph_dir, "index.lance")
         store = LanceDBStore(index_dir)

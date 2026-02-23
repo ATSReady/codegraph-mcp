@@ -157,7 +157,46 @@ class TestServeBootstrap:
         class _L:
             def info(self, *args, **kwargs):
                 return None
+            def warning(self, *args, **kwargs):
+                return None
 
         bootstrap_repo_index(str(tmp_path), _L())
         assert (tmp_path / ".codegraph" / "config.toml").exists()
         assert (tmp_path / ".codegraph" / "index.lance").exists()
+
+    def test_bootstrap_repo_index_skips_when_lock_is_active(self, tmp_path):
+        import json
+        import socket
+        from codegraph.interface.cli.status_cmd import bootstrap_repo_index
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "main.py").write_text("def hello():\n    return 1\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+        codegraph_dir = tmp_path / ".codegraph"
+        codegraph_dir.mkdir(exist_ok=True)
+        lock_file = codegraph_dir / "index.lock"
+        lock_file.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "hostname": socket.gethostname(),
+                    "user": "test",
+                    "acquired_at": "2099-01-01T00:00:00+00:00",
+                    "command": "codegraph index",
+                }
+            )
+        )
+
+        class _L:
+            def info(self, *args, **kwargs):
+                return None
+            def warning(self, *args, **kwargs):
+                return None
+
+        bootstrap_repo_index(str(tmp_path), _L())
+        assert (tmp_path / ".codegraph" / "config.toml").exists()
+        assert not (tmp_path / ".codegraph" / "index.lance").exists()
