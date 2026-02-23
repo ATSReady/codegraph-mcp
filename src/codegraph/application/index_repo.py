@@ -130,6 +130,9 @@ class IndexRepoUseCase:
             if self._progress_tracker is not None and operation_id:
                 self._progress_tracker.set_state(operation_id, ProgressState.COMMITTING)
 
+            if hasattr(self._store, "reset_index_tables"):
+                self._store.reset_index_tables()
+
             if self._embedder and all_chunks:
                 try:
                     texts = [c.embedding_text or c.content for c in all_chunks]
@@ -204,7 +207,7 @@ class IndexRepoUseCase:
         generation: int,
         operation_id: str | None,
     ) -> list[ProcessedFile]:
-        workers = max(1, getattr(self._config.index, "parallel_workers", 1))
+        workers = self._resolve_parallel_workers()
         if workers == 1 or len(partitions) <= 1:
             out: list[ProcessedFile] = []
             for partition in partitions:
@@ -233,6 +236,14 @@ class IndexRepoUseCase:
             for future in as_completed(futures):
                 out.extend(future.result())
         return out
+
+    def _resolve_parallel_workers(self) -> int:
+        configured = getattr(self._config.index, "parallel_workers", 0)
+        if configured and configured > 0:
+            return configured
+        cpu = os.cpu_count() or 1
+        # Keep a practical cap; parsing/chunking is mixed CPU/IO.
+        return max(1, min(8, cpu))
 
     def _process_partition(
         self,

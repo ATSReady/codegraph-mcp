@@ -58,7 +58,7 @@ class IncrementalReindexUseCase:
             return result
 
         generation = metadata.generation + 1
-        changed = self._get_changed_files(metadata)
+        changed = self._get_changed_files(repo_root, metadata)
         result.files_changed = len(changed)
 
         if not changed:
@@ -167,7 +167,7 @@ class IncrementalReindexUseCase:
         generation: int,
         operation_id: str | None,
     ) -> list[ReindexProcessedFile]:
-        workers = max(1, getattr(self._config.index, "parallel_workers", 1))
+        workers = self._resolve_parallel_workers()
         if workers == 1 or len(partitions) <= 1:
             out: list[ReindexProcessedFile] = []
             for p in partitions:
@@ -183,6 +183,13 @@ class IncrementalReindexUseCase:
             for future in as_completed(futures):
                 out.extend(future.result())
         return out
+
+    def _resolve_parallel_workers(self) -> int:
+        configured = getattr(self._config.index, "parallel_workers", 0)
+        if configured and configured > 0:
+            return configured
+        cpu = os.cpu_count() or 1
+        return max(1, min(8, cpu))
 
     def _process_partition(
         self,
@@ -258,16 +265,76 @@ class IncrementalReindexUseCase:
             chunks=chunks,
         )
 
-    def _get_changed_files(self, metadata: IndexMetadata) -> list[dict]:
-        """Get files changed since the last indexed commit."""
+    def _get_changed_files(self, repo_root: str, metadata: IndexMetadata) -> list[dict]:
+        """Get files changed vs manifest using size/mtime (with git fallback)."""
+        from codegraph.infrastructure.parsers.languages import detect_language
+
+        manifest = metadata.file_manifest or {}
+        if not manifest:
+            return self._get_changed_files_from_git(metadata)
+
+        if self._git and self._git.is_git_repo():
+            current_files = self._git.list_tracked_files()
+            if not isinstance(current_files, list):
+                return self._get_changed_files_from_git(metadata)
+            if hasattr(self._git, "filter_gitignored_files"):
+                current_files = self._git.filter_gitignored_files(current_files)
+        else:
+            current_files = list(manifest.keys())
+
+        current_files = [f for f in current_files if detect_language(f) is not None]
+        current_set = set(current_files)
+        manifest_set = set(manifest.keys())
+
+        changes: list[dict] = []
+
+        for deleted in sorted(manifest_set - current_set):
+            changes.append({"file_path": deleted, "status": "deleted"})
+
+        for file_path in sorted(current_set):
+            full_path = os.path.join(repo_root, file_path)
+            if file_path not in manifest:
+                changes.append({"file_path": file_path, "status": "added"})
+                continue
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                changes.append({"file_path": file_path, "status": "deleted"})
+                continue
+
+            prev = manifest[file_path]
+            prev_mtime = getattr(prev, "mtime", 0.0) or 0.0
+            prev_size = getattr(prev, "size", 0) or 0
+            # 1ms tolerance to avoid precision artifacts across FS backends.
+            if abs(stat.st_mtime - prev_mtime) > 0.001 or stat.st_size != prev_size:
+                changes.append({"file_path": file_path, "status": "modified"})
+
+        if changes:
+            return changes
+
+        # Fallback safety net when manifest is missing/incomplete.
+        if self._git:
+            git_changes = self._get_changed_files_from_git(metadata)
+            return [c for c in git_changes if detect_language(c["file_path"]) is not None]
+        return []
+
+    def _get_changed_files_from_git(self, metadata: IndexMetadata) -> list[dict]:
         if not self._git:
             return []
         head_commit = metadata.workspace_state.head_commit
         if not head_commit:
             return []
-        return self._git.get_changed_files_since(
+        git_changes = self._git.get_changed_files_since(
             head_commit, include_worktree=True,
         )
+        if hasattr(self._git, "filter_gitignored_files"):
+            filtered = self._git.filter_gitignored_files(
+                [c["file_path"] for c in git_changes]
+            )
+            if isinstance(filtered, list):
+                allowed = set(filtered)
+                git_changes = [c for c in git_changes if c["file_path"] in allowed]
+        return git_changes
 
 
 @dataclass

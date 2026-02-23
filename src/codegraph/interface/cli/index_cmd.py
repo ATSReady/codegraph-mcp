@@ -1,4 +1,4 @@
-"""Index and reindex CLI commands."""
+"""Index CLI commands."""
 from __future__ import annotations
 
 import os
@@ -37,16 +37,77 @@ def _render_progress_line(snapshot) -> str:
     )
 
 
-def _stream_progress(tracker, stop_event: threading.Event) -> None:
+def _stream_progress(tracker, stop_event: threading.Event, state: dict | None = None) -> None:
+    use_tty_bars = sys.stderr.isatty()
+    overall_bar = None
+    partition_bars = {}
+    partition_positions = {}
+    try:
+        if use_tty_bars:
+            try:
+                from tqdm import tqdm  # type: ignore
+
+                overall_bar = tqdm(
+                    total=1,
+                    desc="overall",
+                    unit="file",
+                    dynamic_ncols=True,
+                    leave=True,
+                    position=0,
+                )
+            except Exception:
+                use_tty_bars = False
+    except Exception:
+        use_tty_bars = False
+    if state is not None:
+        state["used_tqdm"] = bool(use_tty_bars and overall_bar is not None)
+
     last_line = None
     while not stop_event.is_set():
         snap = tracker.get_active() or tracker.get_last()
         if snap is not None:
-            line = _render_progress_line(snap)
-            if line != last_line:
-                click.echo(line)
-                last_line = line
+            if use_tty_bars and overall_bar is not None:
+                overall_total = max(1, snap.files_total)
+                if overall_bar.total != overall_total:
+                    overall_bar.total = overall_total
+                overall_bar.n = min(snap.files_done + snap.files_failed, overall_total)
+                overall_bar.set_postfix_str(
+                    f"{snap.state.value} failed={snap.files_failed}"
+                )
+                overall_bar.refresh()
+
+                # One tqdm bar per partition, each with its own total/done counts.
+                for idx, partition in enumerate(sorted(snap.partition_files_total.keys()), start=1):
+                    if partition not in partition_bars:
+                        from tqdm import tqdm  # type: ignore
+
+                        partition_positions[partition] = idx
+                        partition_bars[partition] = tqdm(
+                            total=max(1, snap.partition_files_total.get(partition, 1)),
+                            desc=f"partition:{partition}",
+                            unit="file",
+                            dynamic_ncols=True,
+                            leave=True,
+                            position=idx,
+                        )
+                    bar = partition_bars[partition]
+                    bar.total = max(1, snap.partition_files_total.get(partition, 1))
+                    bar.n = min(
+                        snap.partition_files_done.get(partition, 0),
+                        bar.total,
+                    )
+                    bar.refresh()
+            else:
+                line = _render_progress_line(snap)
+                if line != last_line:
+                    click.echo(line)
+                    last_line = line
         time.sleep(0.1)
+
+    for partition in sorted(partition_bars.keys()):
+        partition_bars[partition].close()
+    if overall_bar is not None:
+        overall_bar.close()
 
 
 @cli.command()
@@ -59,7 +120,7 @@ def _stream_progress(tracker, stop_event: threading.Event) -> None:
 @click.option("--progress", "show_progress", is_flag=True, help="Show indexing progress updates")
 @click.option("--repo-root", default=".", help="Repository root")
 def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_progress, repo_root):
-    """Build or rebuild the code index."""
+    """Build or refresh the code index (incremental by default)."""
     repo_root = os.path.abspath(repo_root)
 
     # Check/break lock
@@ -116,119 +177,98 @@ def index(force, no_embed, no_prompt, provider, verbose, break_stale_lock, show_
                     if verbose:
                         click.echo(f"Warning: Could not load embedding provider: {e}", err=True)
 
-            # Run index
+            # Run index/reindex
             from codegraph.application.index_repo import IndexRepoUseCase
+            from codegraph.application.reindex import IncrementalReindexUseCase
             from codegraph.interface.cli.status_cmd import get_progress_tracker
+            from codegraph.infrastructure.config_loader import load_config
 
             tracker = get_progress_tracker(repo_root)
-            use_case = IndexRepoUseCase(
-                store=store,
-                parser=parser,
-                git_client=git,
-                embedding_provider=embedding_provider,
-                chunker=chunker,
-                progress_tracker=tracker,
-            )
+            config = load_config(repo_root)
+            metadata = store.get_metadata()
+            is_incremental = (not force) and (metadata is not None)
+            if is_incremental:
+                use_case = IncrementalReindexUseCase(
+                    store=store,
+                    parser=parser,
+                    git_client=git,
+                    embedding_provider=embedding_provider,
+                    chunker=chunker,
+                    progress_tracker=tracker,
+                    config=config,
+                )
+            else:
+                use_case = IndexRepoUseCase(
+                    store=store,
+                    parser=parser,
+                    git_client=git,
+                    embedding_provider=embedding_provider,
+                    chunker=chunker,
+                    progress_tracker=tracker,
+                    config=config,
+                )
 
             if verbose:
                 click.echo(f"Indexing {repo_root}...")
             stop_event = threading.Event()
             progress_thread = None
+            progress_state = {}
             if show_progress:
                 progress_thread = threading.Thread(
-                    target=_stream_progress, args=(tracker, stop_event), daemon=True
+                    target=_stream_progress, args=(tracker, stop_event, progress_state), daemon=True
                 )
                 progress_thread.start()
             try:
-                result = use_case.execute(repo_root, force=force)
+                if is_incremental:
+                    result = use_case.execute(repo_root)
+                else:
+                    result = use_case.execute(repo_root, force=force)
             finally:
                 if show_progress and progress_thread is not None:
                     stop_event.set()
                     progress_thread.join(timeout=1.0)
 
-            click.echo(
-                f"Indexed {result.files_indexed} files: "
-                f"{result.symbols_count} symbols, {result.edges_count} edges, "
-                f"{result.chunks_count} chunks (gen {result.generation})"
-            )
+            if is_incremental:
+                if result.needs_full_index:
+                    # Metadata disappeared or was unavailable: fallback to full index immediately.
+                    full = IndexRepoUseCase(
+                        store=store,
+                        parser=parser,
+                        git_client=git,
+                        embedding_provider=embedding_provider,
+                        chunker=chunker,
+                        progress_tracker=tracker,
+                        config=config,
+                    )
+                    result = full.execute(repo_root, force=True)
+                    is_incremental = False
+                elif result.files_changed == 0:
+                    click.echo(f"Index is up to date (gen {metadata.generation}).")
+                    return
+
+            if is_incremental:
+                click.echo(
+                    f"Indexed {result.files_reindexed} changed files: "
+                    f"{result.symbols_count} symbols, {result.edges_count} edges "
+                    f"(gen {result.generation})"
+                )
+            else:
+                click.echo(
+                    f"Indexed {result.files_indexed} files: "
+                    f"{result.symbols_count} symbols, {result.edges_count} edges, "
+                    f"{result.chunks_count} chunks (gen {result.generation})"
+                )
             if show_progress:
+                used_tqdm = bool(progress_state.get("used_tqdm"))
                 snap = tracker.get(result.operation_id) if result.operation_id else tracker.get_last()
-                if snap:
+                if snap and not used_tqdm:
                     click.echo(_render_progress_line(snap))
             if result.files_failed > 0:
                 click.echo(f"  {result.files_failed} files failed", err=True)
-            if result.chunks_embedded > 0:
+            if hasattr(result, "chunks_embedded") and result.chunks_embedded > 0:
                 click.echo(f"  {result.chunks_embedded} chunks embedded")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
-
-@cli.command()
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-@click.option("--progress", "show_progress", is_flag=True, help="Show reindex progress updates")
-@click.option("--repo-root", default=".", help="Repository root")
-def reindex(verbose, show_progress, repo_root):
-    """Incrementally reindex changed files."""
-    repo_root = os.path.abspath(repo_root)
-
-    from codegraph.infrastructure.storage.lock import IndexLock
-
-    lock_path = os.path.join(repo_root, ".codegraph", "index.lock")
-    lock = IndexLock(lock_path)
-
-    try:
-        with lock:
-            from codegraph.infrastructure.storage.lancedb_store import LanceDBStore
-            from codegraph.infrastructure.parsers.tree_sitter_parser import TreeSitterParser
-            from codegraph.infrastructure.git.client import SubprocessGitClient
-            from codegraph.infrastructure.parsers.chunker import CodeChunker
-            from codegraph.application.reindex import IncrementalReindexUseCase
-            from codegraph.interface.cli.status_cmd import get_progress_tracker
-
-            index_dir = os.path.join(repo_root, ".codegraph", "index.lance")
-            store = LanceDBStore(index_dir)
-            parser = TreeSitterParser()
-            git = SubprocessGitClient(repo_root)
-            chunker = CodeChunker()
-            tracker = get_progress_tracker(repo_root)
-
-            use_case = IncrementalReindexUseCase(
-                store=store,
-                parser=parser,
-                git_client=git,
-                chunker=chunker,
-                progress_tracker=tracker,
-            )
-            stop_event = threading.Event()
-            progress_thread = None
-            if show_progress:
-                progress_thread = threading.Thread(
-                    target=_stream_progress, args=(tracker, stop_event), daemon=True
-                )
-                progress_thread.start()
-            try:
-                result = use_case.execute(repo_root)
-            finally:
-                if show_progress and progress_thread is not None:
-                    stop_event.set()
-                    progress_thread.join(timeout=1.0)
-
-            if result.needs_full_index:
-                click.echo("No existing index. Run 'codegraph index' first.")
-                sys.exit(1)
-
-            click.echo(
-                f"Reindexed {result.files_reindexed} files: "
-                f"{result.symbols_count} symbols, {result.edges_count} edges "
-                f"(gen {result.generation})"
-            )
-            if show_progress:
-                snap = tracker.get(result.operation_id) if result.operation_id else tracker.get_last()
-                if snap:
-                    click.echo(_render_progress_line(snap))
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)

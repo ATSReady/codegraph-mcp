@@ -52,6 +52,67 @@ def read_progress_file(repo_root: str) -> dict | None:
         return None
 
 
+def bootstrap_repo_index(repo_root: str, logger) -> None:
+    """Initialize config (if needed) and run immediate index refresh."""
+    from codegraph.application.index_repo import IndexRepoUseCase
+    from codegraph.application.reindex import IncrementalReindexUseCase
+    from codegraph.infrastructure.config_loader import load_config, save_default_config
+    from codegraph.infrastructure.git.client import SubprocessGitClient
+    from codegraph.infrastructure.parsers.chunker import CodeChunker
+    from codegraph.infrastructure.parsers.tree_sitter_parser import TreeSitterParser
+    from codegraph.infrastructure.storage.lancedb_store import LanceDBStore
+    from codegraph.infrastructure.storage.lock import IndexLock
+
+    codegraph_dir = os.path.join(repo_root, ".codegraph")
+    os.makedirs(codegraph_dir, exist_ok=True)
+    config_path = os.path.join(codegraph_dir, "config.toml")
+    if not os.path.exists(config_path):
+        save_default_config(config_path)
+        logger.info("Created default config at %s", config_path)
+
+    lock = IndexLock(os.path.join(codegraph_dir, "index.lock"))
+    with lock:
+        index_dir = os.path.join(codegraph_dir, "index.lance")
+        store = LanceDBStore(index_dir)
+        parser = TreeSitterParser()
+        git = SubprocessGitClient(repo_root)
+        chunker = CodeChunker()
+        config = load_config(repo_root)
+        tracker = get_progress_tracker(repo_root)
+
+        metadata = store.get_metadata()
+        if metadata is None:
+            result = IndexRepoUseCase(
+                store=store,
+                parser=parser,
+                git_client=git,
+                chunker=chunker,
+                config=config,
+                progress_tracker=tracker,
+            ).execute(repo_root)
+            logger.info(
+                "Startup full index complete: files=%s symbols=%s gen=%s",
+                result.files_indexed,
+                result.symbols_count,
+                result.generation,
+            )
+        else:
+            result = IncrementalReindexUseCase(
+                store=store,
+                parser=parser,
+                git_client=git,
+                chunker=chunker,
+                config=config,
+                progress_tracker=tracker,
+            ).execute(repo_root)
+            logger.info(
+                "Startup incremental index complete: changed=%s reindexed=%s gen=%s",
+                result.files_changed,
+                result.files_reindexed,
+                result.generation if result.generation else metadata.generation,
+            )
+
+
 @cli.command()
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--exit-stale", is_flag=True, help="Exit code 3 if index is stale")
@@ -205,6 +266,7 @@ def serve(repo_root, log_level, no_watch):
     repo_root = os.path.abspath(repo_root)
     logger = logging.getLogger("codegraph")
     logger.info("Starting MCP server for %s", repo_root)
+    bootstrap_repo_index(repo_root, logger)
 
     from codegraph.infrastructure.storage.lancedb_store import LanceDBStore
     from codegraph.infrastructure.parsers.tree_sitter_parser import TreeSitterParser

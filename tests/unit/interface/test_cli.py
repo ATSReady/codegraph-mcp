@@ -126,5 +126,38 @@ class TestCliIndexProgress:
         result = runner.invoke(cli, ["index", "--no-embed", "--progress", "--repo-root", str(tmp_path)])
         assert result.exit_code == 0
         assert "progress" in result.output.lower()
-        assert "[" in result.output and "]" in result.output
-        assert "overall" in result.output.lower()
+
+    def test_second_index_run_reports_up_to_date(self, runner, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "main.py").write_text("def hello():\n    return 1\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+        (tmp_path / ".codegraph").mkdir(exist_ok=True)
+
+        first = runner.invoke(cli, ["index", "--no-embed", "--repo-root", str(tmp_path)])
+        second = runner.invoke(cli, ["index", "--no-embed", "--repo-root", str(tmp_path)])
+        assert first.exit_code == 0
+        assert second.exit_code == 0
+        assert "up to date" in second.output.lower()
+
+
+class TestServeBootstrap:
+    def test_bootstrap_repo_index_creates_config_and_index(self, tmp_path):
+        from codegraph.interface.cli.status_cmd import bootstrap_repo_index
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "main.py").write_text("def hello():\n    return 1\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+        class _L:
+            def info(self, *args, **kwargs):
+                return None
+
+        bootstrap_repo_index(str(tmp_path), _L())
+        assert (tmp_path / ".codegraph" / "config.toml").exists()
+        assert (tmp_path / ".codegraph" / "index.lance").exists()

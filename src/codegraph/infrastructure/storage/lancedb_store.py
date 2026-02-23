@@ -43,6 +43,17 @@ class LanceDBStore:
             warnings.simplefilter("ignore", DeprecationWarning)
             return name in self._db.table_names()
 
+    def reset_index_tables(self) -> None:
+        """Drop data tables used by full index so re-index starts clean."""
+        for name in ("symbols", "edges", "chunks", "diagnostics"):
+            if not self._table_exists(name):
+                continue
+            try:
+                self._db.drop_table(name)
+            except Exception:
+                # Keep indexing resilient even if drop is not supported by backend version.
+                pass
+
     # ------------------------------------------------------------------
     # Symbols
     # ------------------------------------------------------------------
